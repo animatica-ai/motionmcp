@@ -11,7 +11,7 @@ const url     = process.env.DOCUSAURUS_URL     || "https://animatica.ai";
 const config: Config = {
   title: "MMCP",
   tagline: "A simple HTTP contract for motion generation models — and a Python SDK to ship one.",
-  favicon: "img/favicon.ico",
+  favicon: "img/icon.svg",
 
   future: {
     v4: true,
