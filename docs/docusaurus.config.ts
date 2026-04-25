@@ -20,6 +20,11 @@ const config: Config = {
   url,
   baseUrl,
 
+  // Emit `.html` files (not `path/index.html`) and use slash-free URLs.
+  // Lets the docs deploy under animatica.ai/mmcp through Next.js's default
+  // `trailingSlash: false` static-file serving without redirect loops.
+  trailingSlash: false,
+
   organizationName: "animatica-ai",
   projectName: "motionmcp",
 
