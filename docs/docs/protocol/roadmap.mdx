@@ -1,7 +1,7 @@
 ---
 id: roadmap
 title: Roadmap
-description: What's deferred to future versions of the protocol and the SDK, and what lives only in the cloud product.
+description: What's deferred to future versions of the protocol and the SDK, and what lives only in Animatica Cloud.
 sidebar_position: 2
 ---
 
@@ -17,9 +17,9 @@ across three buckets:
    No protocol change required. Will land in the open-source
    `motionmcp` package over time.
 3. **Cloud-only** — features that only make sense as a hosted service.
-   Won't ship in the open-source SDK. Available through the cloud
-   product, which any MMCP-compliant client can hit — the wire format
-   is the same.
+   Won't ship in the open-source SDK. Available through Animatica
+   Cloud, which any MMCP-compliant client can hit — the wire format is
+   the same.
 
 If something you need isn't here, open an issue on
 [GitHub](https://github.com/animatica-ai/motionmcp).
@@ -68,14 +68,14 @@ they're just not there yet.
 
 These are deliberately not in the open-source SDK. They need ML
 expertise, hosted infrastructure, or run-cost economics that don't
-make sense for a single-machine setup. The cloud product surfaces
+make sense for a single-machine setup. **Animatica Cloud** surfaces
 them behind the same MMCP wire contract — any client written against
 the protocol works.
 
 - **Skeleton retargeting** — accept any client skeleton (Mixamo,
   Maya HumanIK, Unreal mannequin, custom rigs) and retarget under the
   hood. The OSS path requires the canonical skeleton from
-  `/capabilities`; the cloud lifts that constraint.
+  `/capabilities`; Animatica Cloud lifts that constraint.
 - **Hosted GPU compute** — pay-per-generate without the user managing
   weights, drivers, or autoscaling.
 - **Multi-tenant auth + billing** — token-based access, usage
@@ -85,7 +85,7 @@ the protocol works.
 - **Trained-model hosting** — quality and fast variants, A/B'd model
   versions, opt-in to newer models without re-deploying anything.
 
-If you need any of these, the cloud is the easier path. See
+If you need any of these, Animatica Cloud is the easier path. See
 **[Servers & clients →](../get-started/implementations)** for the full
 catalog of supported pieces.
 

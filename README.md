@@ -17,7 +17,7 @@ implementing the server side trivial.
 **Officially supported servers** (built on this SDK):
 - **[motionmcp-kimodo](https://github.com/animatica-ai/motionmcp-kimodo)** —
   the Kimodo SOMA model. Open-source, self-hosted.
-- **MMCP Cloud** — hosted product. Adds skeleton retargeting, managed
+- **Animatica Cloud** — hosted product. Adds skeleton retargeting, managed
   GPUs, batch generation, multi-tenant auth.
 
 **Officially supported clients:**
