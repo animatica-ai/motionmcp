@@ -2,6 +2,12 @@ import { themes as prismThemes } from "prism-react-renderer";
 import type { Config } from "@docusaurus/types";
 import type * as Preset from "@docusaurus/preset-classic";
 
+// Env-driven so the same docs source can serve from multiple hosts:
+//   - default (`npm start`, mmcp.dev) → "/"
+//   - mounted under animatica.ai/mmcp/ → DOCUSAURUS_BASE_URL=/mmcp/ DOCUSAURUS_URL=https://animatica.ai
+const baseUrl = process.env.DOCUSAURUS_BASE_URL || "/";
+const url     = process.env.DOCUSAURUS_URL     || "https://mmcp.dev";
+
 const config: Config = {
   title: "MMCP",
   tagline: "A simple HTTP contract for motion generation models — and a Python SDK to ship one.",
@@ -11,10 +17,10 @@ const config: Config = {
     v4: true,
   },
 
-  url: "https://mmcp.dev",
-  baseUrl: "/",
+  url,
+  baseUrl,
 
-  organizationName: "kimodo",
+  organizationName: "animatica-ai",
   projectName: "motionmcp",
 
   onBrokenLinks: "warn",
