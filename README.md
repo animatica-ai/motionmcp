@@ -7,7 +7,7 @@ SDK handles wire-format validation, glTF encoding, and the standard
 error envelope; you implement model loading and a single `generate()`
 method.
 
-[docs]: https://mmcp.dev
+[docs]: https://animatica.ai/mmcp
 
 ## Where this fits
 
@@ -26,7 +26,7 @@ implementing the server side trivial.
 
 Want to add another model or DCC? The protocol is yours to implement —
 this SDK just makes the server side easy. See
-[Servers & clients](https://mmcp.dev/docs/get-started/implementations)
+[Servers & clients](https://animatica.ai/mmcp/docs/get-started/implementations)
 for the full list and how to build your own.
 
 ```python

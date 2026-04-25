@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Pydantic models for the MMCP wire format.
 
-The shapes here mirror the canonical protocol spec at https://mmcp.dev/.
+The shapes here mirror the canonical protocol spec at https://animatica.ai/mmcp/.
 Keep them in sync with that source of truth.
 """
 

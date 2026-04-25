@@ -2,11 +2,11 @@ import { themes as prismThemes } from "prism-react-renderer";
 import type { Config } from "@docusaurus/types";
 import type * as Preset from "@docusaurus/preset-classic";
 
-// Env-driven so the same docs source can serve from multiple hosts:
-//   - default (`npm start`, mmcp.dev) → "/"
+// Env-driven so local dev (`npm start`, baseUrl /) and the deployed
+// build (animatica.ai/mmcp/) can share the same source.
 //   - mounted under animatica.ai/mmcp/ → DOCUSAURUS_BASE_URL=/mmcp/ DOCUSAURUS_URL=https://animatica.ai
 const baseUrl = process.env.DOCUSAURUS_BASE_URL || "/";
-const url     = process.env.DOCUSAURUS_URL     || "https://mmcp.dev";
+const url     = process.env.DOCUSAURUS_URL     || "https://animatica.ai";
 
 const config: Config = {
   title: "MMCP",

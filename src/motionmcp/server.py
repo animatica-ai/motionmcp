@@ -119,7 +119,7 @@ def build_app(
         version=PROTOCOL_VERSION,
         description=description or (
             "MMCP — Motion Model Context Protocol. "
-            "See https://mmcp.dev for the protocol docs."
+            "See https://animatica.ai/mmcp for the protocol docs."
         ),
         lifespan=_lifespan,
     )
