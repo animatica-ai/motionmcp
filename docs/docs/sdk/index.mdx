@@ -1,0 +1,108 @@
+---
+id: index
+title: Python SDK
+description: motionmcp — the Python SDK for building an MMCP server.
+sidebar_label: Overview
+slug: /sdk/
+---
+
+# Python SDK — overview
+
+`motionmcp` is the Python SDK for the [MMCP protocol](../get-started/introduction).
+It lets you stand up a vendor-neutral motion-generation HTTP server in
+about thirty lines.
+
+```bash
+pip install motionmcp
+```
+
+The SDK handles wire format, validation, glTF encoding, and the standard
+error envelope. You implement model loading and a single `generate()`
+method.
+
+## What you get
+
+| | |
+|---|---|
+| **Schemas** | Pydantic models for the full wire format — `Skeleton`, `Segment`, `Constraint`, `Options`, `GenerateRequest`. Free validation, IDE autocomplete, OpenAPI docs at `/docs`. |
+| **Endpoints** | `GET /capabilities`, `POST /generate`, plus a generic exception → MMCP error envelope handler. |
+| **Generic checks** | Unknown model, unknown joint in constraint, frame-out-of-range, retargeting policy, constraint count, prompt length, duration limit. All raise the right `error.code`. |
+| **glTF encoder** | numpy arrays in, glTF 2.0 JSON out, with the `MMCP_motion` extension correctly populated. |
+| **Reference impl** | `NullBackbone` returns a rest pose for any request. Useful for plugin development against a real server with zero ML deps. |
+
+## What you implement
+
+| | |
+|---|---|
+| `Backbone.capabilities() -> ModelSpec` | What model you serve. |
+| `Backbone.generate(request) -> MotionResult` | The actual generation. May be `async def` or sync. |
+| `Backbone.setup()` / `teardown()` | Optional, for model loading and GPU allocation. |
+
+That's it.
+
+## The thirty-line server
+
+```python
+import numpy as np
+from motionmcp import (
+    Backbone, ModelSpec, GenerateRequest,
+    MotionResult, Skeleton, Joint, serve,
+)
+
+class MyBackbone(Backbone):
+    def capabilities(self) -> ModelSpec:
+        return ModelSpec(
+            id="my-model",
+            fps=30.0,
+            canonical_skeleton=Skeleton(joints=[
+                Joint(name="Hips", parent=None,
+                      rest_translation=(0.0, 0.95, 0.0),
+                      rest_rotation=(0.0, 0.0, 0.0, 1.0)),
+            ]),
+            supports_retargeting=False,
+            supported_constraints=["pose_keyframe"],
+        )
+
+    async def generate(self, req: GenerateRequest) -> MotionResult:
+        rotations    = self.model.run(req)        # (N, T, J, 4) (x,y,z,w)
+        translations = self.model.run_root(req)   # (N, T, 3)
+        return MotionResult(
+            rotations=rotations,
+            root_translations=translations,
+        )
+
+if __name__ == "__main__":
+    serve(MyBackbone())
+```
+
+That's the whole server.
+
+## Where to go next
+
+- **[Install →](./install)** — versions, optional deps, dev setup.
+- **[Backbone →](./backbone)** — the `Backbone` ABC, `ModelSpec`, hooks.
+- **[MotionResult →](./results)** — return shape, optional fields, foot
+  contacts, chunk boundaries.
+- **[Errors →](./errors)** — the typed exceptions to raise.
+- **[Serving →](./serving)** — multi-model, custom FastAPI mounting,
+  deployment.
+- **[NullBackbone →](./null-backbone)** — the reference impl + dev
+  workflow.
+
+## What's NOT in v0
+
+These are deliberate omissions to keep the v0 surface tight. Each is on
+the roadmap.
+
+- **Async jobs** — `POST /generate` returning `202 Accepted` and
+  `GET /generate/jobs/{id}` polling. Sync only for now.
+- **Idempotency cache** — spec-recommended but not required.
+- **Binary glTF** (`model/gltf-binary`). JSON only for now.
+- **fps resampling** between request fps and the model's native fps.
+  Backbones currently see `request.fps(spec.fps)` and are responsible
+  for honoring it.
+- **Built-in retargeting**. Set `supports_retargeting=False` and require
+  the canonical skeleton, or implement retargeting in your `generate()`.
+
+Feedback welcome on which to prioritise next — open an issue on
+[GitHub](https://github.com/animatica-ai/motionmcp).

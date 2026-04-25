@@ -1,0 +1,143 @@
+---
+id: errors
+title: Errors
+description: Typed exceptions you raise so the SDK returns the right wire envelope.
+sidebar_position: 5
+---
+
+# Errors
+
+Raise `motionmcp.ProtocolError` (or one of the typed convenience
+constructors) for any protocol-level failure. The SDK catches it,
+serialises it as the standard MMCP error envelope, and returns the
+correct HTTP status.
+
+```python
+from motionmcp import ProtocolError
+from motionmcp.errors import (
+    unknown_model, unknown_joint, frame_out_of_range,
+    unsupported_constraint, retargeting_unsupported,
+    version_unsupported,
+)
+```
+
+Anything that *isn't* a `ProtocolError` becomes `500 internal_error`.
+
+## The wire envelope
+
+Every error response has the same shape:
+
+```json
+{
+  "error": {
+    "code": "unknown_joint",
+    "message": "joint 'LefHand' is not in the request skeleton",
+    "details": { "skeleton_joints": ["Hips", "LeftHand", "RightHand"] }
+  }
+}
+```
+
+See **[Errors reference →](../reference/errors)** for the full code
+table and HTTP status mapping.
+
+## What the SDK raises for you
+
+The server already raises these — you don't need to:
+
+| Code | When |
+|---|---|
+| `schema_validation` | Request body fails Pydantic validation |
+| `unknown_model` | `request.model` is not in the registry |
+| `version_unsupported` | `protocol_version` major doesn't match this server |
+| `retargeting_unsupported` | Custom skeleton sent to a `supports_retargeting=False` model |
+| `unsupported_constraint` | Constraint type isn't in `model.supported_constraints` |
+| `unknown_joint` | Constraint references a joint name not in the skeleton |
+| `frame_out_of_range` | Constraint frame outside `[0, total_frames - 1]` |
+| `invalid_options` | num_samples / prompt length / duration / constraint count exceeds limits |
+
+## What you raise
+
+Conditions only your backbone knows about:
+
+| Code | Helper | Use for |
+|---|---|---|
+| `model_unavailable` | `ProtocolError("model_unavailable", …)` | Weights still loading at request time |
+| `resource_exhausted` | `ProtocolError("resource_exhausted", …)` | GPU full, queue saturated |
+| `timeout` | `ProtocolError("timeout", …)` | Generation exceeded your deadline |
+| `invalid_options` | `ProtocolError("invalid_options", …)` | Backbone-specific option validation |
+| `unauthorized` / `forbidden` | `ProtocolError("unauthorized", …)` | If you wrap auth in your backbone |
+
+```python
+from motionmcp import ProtocolError
+
+async def generate(self, req):
+    if not self.weights_loaded:
+        raise ProtocolError(
+            "model_unavailable",
+            "weights are still loading; retry in a few seconds",
+        )
+
+    if not self.gpu_pool.acquire(timeout=5.0):
+        raise ProtocolError(
+            "resource_exhausted",
+            "GPU pool exhausted",
+            details={"queue_depth": self.gpu_pool.depth},
+        )
+    try:
+        return await self._run(req)
+    finally:
+        self.gpu_pool.release()
+```
+
+The SDK will return the right HTTP status (`503` / `503` here) and
+serialise the envelope.
+
+## Retry semantics (for client authors)
+
+When a client sees an error, the code dictates whether to retry:
+
+| Code | Retry? |
+|---|---|
+| Anything in the `4xx` "fix the request" family — `schema_validation`, `unknown_*`, `unsupported_*`, `invalid_*`, `version_unsupported`, `payload_too_large`, `retargeting_unsupported` | **No** — fix the request |
+| `rate_limited`, `resource_exhausted`, `model_unavailable`, `timeout` | **Yes** — honor `Retry-After`, exponential backoff |
+| `internal_error` | **No** — backbone failure, not transient |
+| `unauthorized`, `forbidden` | **No** — fix credentials |
+
+## Convenience constructors
+
+The typed helpers in `motionmcp.errors` return pre-shaped `ProtocolError`
+instances. They include sensible default `details` so clients can
+recover automatically.
+
+```python
+from motionmcp.errors import (
+    unknown_model, unknown_joint, frame_out_of_range,
+    unsupported_constraint, retargeting_unsupported,
+    version_unsupported,
+)
+
+# unknown_model("foo", available=["good", "models"])
+# unknown_joint("LefHand", skeleton_joints=["Hips", "LeftHand", "RightHand"])
+# frame_out_of_range(frame=999, total_frames=120)
+# unsupported_constraint("audio_alignment", supported=["pose_keyframe"])
+# retargeting_unsupported()
+# version_unsupported("2.0", supported_majors=["1"])
+```
+
+Use these in your backbone whenever they fit — the resulting `details`
+block is what clients expect.
+
+## Custom details
+
+For codes the helpers don't cover, pass your own `details`:
+
+```python
+raise ProtocolError(
+    "invalid_options",
+    "diffusion_steps must be a multiple of 10 for this model",
+    details={"got": req.options.diffusion_steps, "stride": 10},
+)
+```
+
+The `details` payload is JSON-serialisable and goes verbatim to the
+client. Don't put PII or auth secrets here.

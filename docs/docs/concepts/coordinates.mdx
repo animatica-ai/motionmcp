@@ -1,0 +1,80 @@
+---
+id: coordinates
+title: Coordinate systems
+description: Conversion tables for Blender, Maya, Unity, Unreal.
+sidebar_position: 5
+---
+
+# Coordinate systems
+
+MMCP is **right-handed, Y-up, meters**. That matches glTF&nbsp;2.0 §3.2.
+The `coordinate_system` and `units` fields exist in the wire format for
+forward compatibility but in v1 must be `"right_handed_y_up"` and
+`"meters"`.
+
+DCC plugins that work in different conventions convert at the boundary.
+Axis-up swaps and handedness flips are distinct operations and **MUST**
+be applied in a defined order.
+
+The tables below are the reference conversions; plugins SHOULD use them
+verbatim.
+
+## Right-handed Z-up → MMCP (Blender default)
+
+| Quantity | Formula |
+|---|---|
+| Position `(x, y, z)` | `(x, z, -y)` |
+| Quaternion `(qx, qy, qz, qw)` | `(qx, qz, -qy, qw)` |
+| Heading `θ` | unchanged (rotation about up-axis is preserved by axis swap) |
+
+Inverse (MMCP → Z-up):
+
+| Quantity | Formula |
+|---|---|
+| Position `(x, y, z)` | `(x, -z, y)` |
+| Quaternion `(qx, qy, qz, qw)` | `(qx, -qz, qy, qw)` |
+
+## Left-handed Y-up → MMCP (Unity, Unreal native)
+
+| Quantity | Formula |
+|---|---|
+| Position `(x, y, z)` | `(x, y, -z)` |
+| Quaternion `(qx, qy, qz, qw)` | `(-qx, -qy, qz, qw)` |
+| Heading `θ` | `-θ` |
+
+Inverse is identical (the transform is its own inverse).
+
+## Left-handed Z-up → MMCP (Unreal scene units)
+
+Compose right-handed Z-up → MMCP after a Z-flip:
+
+| Quantity | Formula |
+|---|---|
+| Position `(x, y, z)` | `(x, -z, -y)` |
+| Quaternion `(qx, qy, qz, qw)` | `(-qx, -qz, qy, qw)` |
+| Heading `θ` | `-θ` |
+
+## Worked example — Blender Z-up RH → request
+
+A Blender bone with rest head at world `(0, 0, 1.0)` (Z-up; standing hips
+height) and an identity rest rotation goes onto the wire as:
+
+```json
+{
+  "name": "Hips",
+  "parent": null,
+  "rest_translation": [0.0, 1.0, 0.0],
+  "rest_rotation":    [0.0, 0.0, 0.0, 1.0]
+}
+```
+
+For headings: in MMCP, `heading_radians: 0` faces MMCP +Z, which under
+the Z-up → MMCP swap above corresponds to Blender world −Y. A character
+that the user drew facing Blender +Y therefore goes on the wire as
+`heading_radians: π`.
+
+:::tip[Compute heading from a forward vector]
+Plugin authors SHOULD compute heading from the character's world-space
+forward vector after applying the position swap, not by trying to
+convert the Blender quaternion directly.
+:::

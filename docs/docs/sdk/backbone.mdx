@@ -1,0 +1,186 @@
+---
+id: backbone
+title: Backbone
+description: The Backbone ABC, ModelSpec, and lifecycle hooks.
+sidebar_position: 3
+---
+
+# Backbone
+
+`Backbone` is the only thing you implement. It has two required methods —
+`capabilities()` and `generate()` — plus two optional lifecycle hooks.
+
+```python
+from motionmcp import Backbone, ModelSpec, GenerateRequest, MotionResult
+
+class MyBackbone(Backbone):
+    def setup(self) -> None: ...                     # optional
+    def teardown(self) -> None: ...                  # optional
+
+    def capabilities(self) -> ModelSpec: ...
+    async def generate(self, req: GenerateRequest) -> MotionResult: ...
+```
+
+## `capabilities()`
+
+Returns a `ModelSpec` describing the model. The SDK serialises it into
+the per-model entry under `/capabilities.models[]`.
+
+`ModelSpec` is a Pydantic model with sensible defaults — only `id`,
+`fps`, and `canonical_skeleton` are required.
+
+```python
+from motionmcp import ModelSpec, Skeleton, Joint
+
+ModelSpec(
+    id="my-model-v1",
+    fps=30.0,
+    canonical_skeleton=Skeleton(joints=[
+        Joint(name="Hips", parent=None,
+              rest_translation=(0.0, 0.95, 0.0),
+              rest_rotation=(0.0, 0.0, 0.0, 1.0)),
+    ]),
+
+    # All fields below are optional with the defaults shown:
+    supports_retargeting=False,
+    supports_async=False,
+    supported_constraints=[],          # empty = the model accepts no constraints
+    supported_guidance_types=["nocfg", "regular", "separated"],
+    predicted_contact_joints=[],
+    native_clip_seconds=10.0,
+    chunking="none",                   # or "stitched"
+    recommended_max_duration_seconds=12.0,
+    # limits=Limits(max_duration_seconds=30.0, max_num_samples=16, …)
+)
+```
+
+See **[Capabilities reference →](../reference/capabilities)** for what
+every field controls on the wire.
+
+:::tip[Capabilities is called once per request]
+The SDK calls `capabilities()` on every `/capabilities` and `/generate`
+request to look up the spec. Keep it cheap — return a cached object if
+your spec depends on slow lookups.
+:::
+
+## `generate(request)`
+
+Runs the model on a validated `GenerateRequest` and returns a
+`MotionResult`. May be `async def` or sync — the SDK detects the form
+and awaits when needed.
+
+```python
+async def generate(self, req: GenerateRequest) -> MotionResult:
+    # req.skeleton, req.segments, req.constraints — parsed Pydantic models
+    # req.total_frames                              — int helper
+    # req.fps(spec.fps)                             — effective fps
+    # req.options.num_samples                       — None-safe access via .options
+
+    rotations    = run_my_model(req)
+    translations = run_my_root(req)
+
+    return MotionResult(
+        rotations=rotations,
+        root_translations=translations,
+    )
+```
+
+The shape of `MotionResult` is documented in
+**[Results →](./results)**. The SDK encodes it to glTF for you.
+
+### Sync vs async
+
+Both work. Async is preferred when generation does I/O (queueing on a
+GPU worker, calling out to another service). Sync is fine for a
+self-contained model:
+
+```python
+class FastBackbone(Backbone):
+    def generate(self, req: GenerateRequest) -> MotionResult:
+        ...
+```
+
+The SDK uses `inspect.iscoroutinefunction` to pick the right path.
+
+### Raising errors
+
+Raise `motionmcp.ProtocolError` (or one of the typed convenience
+constructors) for protocol-level failures. The SDK converts them to the
+standard error envelope with the right HTTP status:
+
+```python
+from motionmcp.errors import unknown_joint, ProtocolError
+
+if user_joint not in self.skeleton_names:
+    raise unknown_joint(user_joint, sorted(self.skeleton_names))
+
+if not self.weights_loaded:
+    raise ProtocolError("model_unavailable", "weights still loading")
+```
+
+Anything that isn't a `ProtocolError` becomes `500 internal_error`.
+
+See **[Errors →](./errors)** for the full list.
+
+## `setup()` and `teardown()`
+
+Optional hooks called once at server startup and shutdown. Use them for
+model loading, GPU allocation, warm caches.
+
+```python
+class MyBackbone(Backbone):
+    def setup(self) -> None:
+        self.model = torch.load("weights.pt").to("cuda").eval()
+
+    def teardown(self) -> None:
+        del self.model
+        torch.cuda.empty_cache()
+```
+
+Default implementations are no-ops; override only when needed.
+
+## Putting it together
+
+A real backbone with a loaded model:
+
+```python
+import numpy as np
+import torch
+
+from motionmcp import (
+    Backbone, ModelSpec, GenerateRequest, MotionResult,
+    Skeleton, serve,
+)
+from motionmcp.errors import unknown_joint
+
+class SomaBackbone(Backbone):
+    def __init__(self, weights_path: str) -> None:
+        self.weights_path = weights_path
+        self.model = None
+
+    def setup(self) -> None:
+        self.model = torch.load(self.weights_path).to("cuda").eval()
+        self._spec = ModelSpec(
+            id="soma-v1",
+            fps=30.0,
+            canonical_skeleton=Skeleton.model_validate(
+                self.model.canonical_skeleton_dict
+            ),
+            supports_retargeting=True,
+            supported_constraints=["root_path", "pose_keyframe"],
+        )
+
+    def capabilities(self) -> ModelSpec:
+        return self._spec
+
+    async def generate(self, req: GenerateRequest) -> MotionResult:
+        with torch.no_grad():
+            out = self.model.run(req)            # your I/O here
+        return MotionResult(
+            rotations=out.rotations.cpu().numpy(),
+            root_translations=out.root_translations.cpu().numpy(),
+        )
+
+if __name__ == "__main__":
+    serve(SomaBackbone("weights.pt"))
+```

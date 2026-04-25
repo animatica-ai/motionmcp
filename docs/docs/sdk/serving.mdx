@@ -1,0 +1,151 @@
+---
+id: serving
+title: Serving
+description: serve(), build_app(), multi-model, custom FastAPI mounting.
+sidebar_position: 6
+---
+
+# Serving
+
+Two entry points:
+
+- **`serve(backbone)`** — the simple case. Builds the app and runs uvicorn.
+  Blocks until shutdown.
+- **`build_app(backbone)`** — returns the FastAPI `app`. Use this when you
+  want custom middleware, additional routes, multi-worker deployment, or
+  to mount the MMCP routes inside a larger FastAPI service.
+
+## `serve()` — the simple case
+
+```python
+from motionmcp import serve
+from my_backend import MyBackbone
+
+if __name__ == "__main__":
+    serve(MyBackbone(), host="0.0.0.0", port=8000, log_level="info")
+```
+
+Defaults: `host="0.0.0.0"`, `port=8000`, `log_level="info"`.
+
+`serve()` blocks. Stop with `Ctrl-C` (or send SIGTERM in production —
+uvicorn handles graceful shutdown).
+
+## Multi-model
+
+Serve more than one model from one process by passing a dict:
+
+```python
+serve({
+    "fast":    FastBackbone(),
+    "quality": QualityBackbone(),
+})
+```
+
+Or an iterable, in which case ids come from each backbone's `capabilities().id`:
+
+```python
+serve([FastBackbone(), QualityBackbone()])
+```
+
+The resulting `/capabilities` lists both models. `/generate` dispatches
+on `request.model`.
+
+Use cases:
+
+- A/B testing two backbones from one endpoint.
+- Serving a fast preview model and a high-quality batch model side by
+  side.
+- Stand-in `NullBackbone` while a real model loads asynchronously.
+
+Duplicate model ids raise `ValueError` at startup.
+
+## `build_app()` — custom mounting
+
+When you need custom middleware, auth, or to combine MMCP with other
+routes:
+
+```python
+from fastapi import FastAPI, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from motionmcp import build_app
+from my_backend import MyBackbone
+
+app = build_app(MyBackbone(), title="My Studio's Motion Service")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://animator.mystudio.com"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok"}
+```
+
+Run it under your usual ASGI deployment:
+
+```bash
+uvicorn server:app --host 0.0.0.0 --port 8000 --workers 4
+```
+
+## Mounting under a path prefix
+
+The MMCP routes are bare paths (`/capabilities`, `/generate`). To put
+them under, say, `/motion/`, use FastAPI's mount:
+
+```python
+from fastapi import FastAPI
+from motionmcp import build_app
+from my_backend import MyBackbone
+
+mmcp_app = build_app(MyBackbone())
+app = FastAPI()
+app.mount("/motion", mmcp_app)
+```
+
+Now clients hit `https://your-host/motion/capabilities` and
+`https://your-host/motion/generate`.
+
+## Lifecycle hooks
+
+`Backbone.setup()` runs once at app startup; `teardown()` runs at
+shutdown. Both are called by the SDK's lifespan handler.
+
+```python
+class MyBackbone(Backbone):
+    def setup(self) -> None:
+        self.model = torch.load("weights.pt").to("cuda").eval()
+
+    def teardown(self) -> None:
+        del self.model
+        torch.cuda.empty_cache()
+```
+
+Multi-model setups call `setup()` / `teardown()` on each backbone in
+registration order.
+
+## Production deployment
+
+The SDK is just a FastAPI app — nothing about deployment is
+MMCP-specific.
+
+- **Single process**: `python server.py` or `uvicorn server:app`.
+- **Multi-worker**: `uvicorn server:app --workers 4`. Each worker runs
+  its own backbone instance; if your model loads slowly, account for
+  this in your startup probe.
+- **Behind a proxy**: terminate TLS at nginx / Caddy / your cloud's LB.
+  Forward to the SDK's HTTP port.
+- **Containers**: any Python 3.10+ image works. The SDK has no native
+  dependencies of its own.
+
+## OpenAPI
+
+FastAPI's auto-generated OpenAPI is on by default at `/docs` (Swagger
+UI) and `/redoc`. Disable in production if you don't want it:
+
+```python
+app = build_app(MyBackbone(), title="...")
+app.openapi_url = None         # disables /openapi.json, /docs, /redoc
+```

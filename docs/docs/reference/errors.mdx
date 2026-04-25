@@ -1,0 +1,56 @@
+---
+id: errors
+title: Errors
+description: Standard error envelope and the full error code list.
+sidebar_position: 5
+---
+
+# Errors
+
+Error responses use a uniform shape:
+
+```json
+{
+  "error": {
+    "code": "unknown_model",
+    "message": "Model 'foo' is not in /capabilities.models",
+    "details": { "available_models": ["kimodo-soma-rp"] }
+  }
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `error.code` | string | Machine-readable code from the table below |
+| `error.message` | string | Human-readable message; safe to surface to end users |
+| `error.details` | object \| null | Optional code-specific extra context |
+
+## Error codes
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `schema_validation` | 422 | Request fails JSON schema validation |
+| `unknown_model` | 400 | `model` is not in `/capabilities` |
+| `retargeting_unsupported` | 400 | Custom skeleton sent to a backbone with `supports_retargeting=false` |
+| `unsupported_constraint` | 400 | A constraint type is not in `model.supported_constraints` |
+| `unknown_joint` | 400 | A constraint references a joint name not in `skeleton.joints` |
+| `invalid_skeleton` | 400 | Skeleton has no root, multiple roots, cycles, or out-of-order joints |
+| `frame_out_of_range` | 400 | A constraint references a frame index outside the request timeline |
+| `invalid_options` | 400 | An option value is out of range (e.g. `diffusion_steps: 9999`) or inconsistent (e.g. `guidance.weight` length mismatch) |
+| `version_unsupported` | 400 | Server does not implement the requested `protocol_version` |
+| `unauthorized` | 401 | Missing or invalid credentials |
+| `forbidden` | 403 | Authenticated but not permitted to call this model |
+| `payload_too_large` | 413 | Request body exceeds `model.limits.max_request_bytes` |
+| `rate_limited` | 429 | Caller is rate-limited; check `Retry-After` |
+| `internal_error` | 500 | Backbone failure (non-retryable; clients SHOULD NOT retry) |
+| `resource_exhausted` | 503 | Transient capacity / GPU memory pressure. Retryable with backoff per `Retry-After` |
+| `model_unavailable` | 503 | Model exists but is currently loading or down |
+| `timeout` | 504 | Generation exceeded the server-side deadline |
+
+## Retry semantics
+
+| Code | Retry? |
+|---|---|
+| `schema_validation`, `unknown_model`, `retargeting_unsupported`, `unsupported_constraint`, `unknown_joint`, `invalid_skeleton`, `frame_out_of_range`, `invalid_options`, `version_unsupported`, `unauthorized`, `forbidden`, `payload_too_large` | No — fix the request |
+| `rate_limited`, `resource_exhausted`, `model_unavailable`, `timeout` | Yes — honor `Retry-After`, exponential backoff |
+| `internal_error` | **No** — backbone failure, not transient |

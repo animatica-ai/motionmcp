@@ -1,0 +1,105 @@
+---
+id: introduction
+title: Introduction
+description: What MMCP is, what motionmcp is, and how the two relate.
+sidebar_position: 1
+---
+
+# Introduction
+
+This project is two things in one repo.
+
+**MMCP** — the **Motion Model Context Protocol** — is a backbone-agnostic
+HTTP contract for text- and constraint-driven motion generation models. A
+client (typically a DCC plugin like Blender, Maya, or Houdini, or a web
+tool) sends a structured request describing the character's skeleton, the
+desired motion in natural language, and any spatial constraints. The
+server returns the generated animation as a standard glTF&nbsp;2.0 document.
+
+**motionmcp** — the Python SDK in this repo — implements the server side
+of the protocol. You bring a model and a `generate()` method; it handles
+wire format, validation, glTF encoding, and the standard error envelope.
+A working server is about thirty lines.
+
+```bash
+pip install motionmcp
+```
+
+## Goals
+
+- **Vendor-neutral.** Any motion-generation backbone — diffusion,
+  transformer, hybrid — implements the same wire format.
+- **DCC-friendly.** Inputs are plain JSON. Outputs load into any tool
+  that reads glTF.
+- **Skeleton-respectful.** The user's skeleton is the user's skeleton.
+  No imposed canonical naming.
+- **Hand-writable.** A minimal request fits in five lines.
+
+## Non-goals (v1)
+
+- File uploads or binary buffers in the request.
+- Streaming or partial generation events.
+- Mesh data (skin weights, blend shapes). The protocol is pure motion.
+- Per-finger or facial animation primitives.
+
+## Officially supported implementations
+
+The protocol is vendor-neutral, but the project ships and supports a
+reference set:
+
+- **Server:** [motionmcp-kimodo](https://github.com/animatica-ai/motionmcp-kimodo) —
+  the Kimodo SOMA model behind the protocol. Run on your own hardware;
+  install from source.
+- **Server:** **MMCP Cloud** — the hosted product. Same protocol, plus
+  retargeting and managed compute.
+- **Client:** [Proscenium for Blender](https://github.com/animatica-ai/proscenium-blender) —
+  directable motion generation inside Blender 4.2+. Talks to any MMCP
+  server.
+
+See **[Servers & clients →](./implementations)** for the full list and
+how to build your own.
+
+## How to read these docs
+
+These docs are the canonical source for the protocol *and* the SDK.
+Everything you need to implement a client or a server is here — read in
+order, or jump straight in:
+
+- **[Quickstart (server) →](./quickstart)** — `pip install motionmcp`,
+  write a Backbone, serve. Five minutes.
+- **[Quickstart (client) →](./quickstart-client)** — send a raw HTTP
+  request. Useful for plugin authors and non-Python implementors.
+- **[Servers & clients →](./implementations)** — the catalog of
+  officially supported pieces (motionmcp-kimodo, Proscenium, MMCP Cloud).
+- **[Python SDK →](../sdk/)** — Backbone, ModelSpec, MotionResult,
+  errors, NullBackbone, multi-model serving.
+- **[Concepts →](../concepts/skeleton)** — skeletons, segments,
+  constraints, timing, coordinates. Protocol-level.
+- **[Reference →](../reference/endpoints)** — every wire field, every
+  status code, every error.
+- **[Versioning →](../protocol/versioning)** and
+  **[Roadmap →](../protocol/roadmap)** — how the protocol evolves.
+
+## Which one do I need?
+
+| If you're… | Start here |
+|---|---|
+| Building a server in Python | **[Quickstart (server)](./quickstart)** |
+| Building a server in another language | **[Concepts](../concepts/skeleton)** + **[Reference](../reference/endpoints)** |
+| Writing a DCC plugin or web client | **[Quickstart (client)](./quickstart-client)** |
+| Just curious | **[The protocol, in one page](../concepts/skeleton)** |
+
+## Conventions
+
+| | |
+|---|---|
+| Coordinate system | Right-handed, **Y-up** (matches glTF 2.0 §3.2) |
+| Length unit | **Meters** |
+| Rotation format | Quaternion `[x, y, z, w]` (glTF 2.0 convention) |
+| Time | Frame indices in the request; FPS published in the response |
+| Joint identity | **Joint name** (UTF-8 string, NFC-normalized, case-sensitive, unique within a skeleton) |
+
+The `coordinate_system` and `units` fields exist for forward
+compatibility but are required to be `"right_handed_y_up"` and
+`"meters"` in v1. See [Coordinate systems](../concepts/coordinates) for
+the conversion tables that DCC plugins use at the boundary.

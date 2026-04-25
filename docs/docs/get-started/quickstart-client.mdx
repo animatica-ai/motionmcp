@@ -1,0 +1,101 @@
+---
+id: quickstart-client
+title: Quickstart (client)
+description: Send your first MMCP request from any HTTP client.
+sidebar_position: 3
+---
+
+# Quickstart — client
+
+Building a server in Python? See **[Quickstart (server) →](./quickstart)**.
+
+This walks through hitting an MMCP server with raw HTTP — no SDK
+required. Useful for plugin authors writing in non-Python languages, or
+for sanity-checking a server you're standing up.
+
+## 1 — Discover
+
+```bash
+curl -s https://your-mmcp-server.example.com/capabilities | jq
+```
+
+The response lists every model the server hosts, plus its canonical
+skeleton, supported constraints, fps, and limits. Pick a model id —
+say, `kimodo-soma-rp` — and read its `canonical_skeleton`.
+
+```json
+{
+  "protocol_version": "1.0",
+  "models": [
+    {
+      "id": "kimodo-soma-rp",
+      "fps": 30.0,
+      "supports_retargeting": true,
+      "supported_constraints": ["root_path", "effector_target", "pose_keyframe"],
+      "canonical_skeleton": { "joints": [ /* … */ ] }
+    }
+  ]
+}
+```
+
+See **[Capabilities reference →](../reference/capabilities)** for the full
+shape.
+
+## 2 — Generate
+
+The smallest useful request is a model id, a skeleton, and one text
+segment.
+
+```bash
+curl -s https://your-mmcp-server.example.com/generate \
+  -H "Content-Type: application/json" \
+  -d @request.json \
+  > motion.gltf
+```
+
+Where `request.json` is:
+
+```json
+{
+  "protocol_version": "1.0",
+  "model": "kimodo-soma-rp",
+  "skeleton": { "joints": [ /* model's canonical_skeleton */ ] },
+  "segments": [
+    {
+      "type": "text",
+      "prompt": "a person walks forward, then waves hello",
+      "duration_frames": 120
+    }
+  ]
+}
+```
+
+The response is a standard glTF&nbsp;2.0 document. Load it with any glTF
+parser — `pygltflib`, `cgltf`, the Khronos reference loader, three.js, or
+your DCC's built-in glTF importer.
+
+## 3 — Apply
+
+Each generated sample is one entry in `animations[]`, named `sample_0`,
+`sample_1`, etc. Channels target nodes by **joint name** — the same names
+you sent in the request. Bake them onto your rig as you would any other
+animation clip.
+
+The `extensions.MMCP_motion` block carries non-glTF metadata: fps,
+foot-contact masks, and chunk boundaries. Clients that don't need it can
+ignore the extension entirely and still get a valid glTF.
+
+See **[Response →](../reference/response)** for the extension schema.
+
+## What's next
+
+- **Hand the user's actual skeleton.** Most servers can retarget; you
+  don't have to use the canonical. See
+  **[Skeleton →](../concepts/skeleton)**.
+- **Add constraints.** Pin the root to a path, an effector to a position,
+  or fix a pose at one frame. See
+  **[Constraints →](../concepts/constraints)**.
+- **Bridge segments.** Compose a motion as `text → unconditioned → text`
+  for natural transitions. See **[Segments →](../concepts/segments)**.
+- **Tune generation.** Seeds, sample counts, guidance, transition
+  blending. See **[GenerateRequest →](../reference/generate-request)**.

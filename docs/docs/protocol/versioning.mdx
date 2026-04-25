@@ -1,0 +1,50 @@
+---
+id: versioning
+title: Versioning
+description: How protocol_version works, and what changes are breaking.
+sidebar_position: 1
+---
+
+# Versioning
+
+`protocol_version` is a string `"<major>.<minor>"` matching `^\d+\.\d+$`.
+
+- **Breaking changes** bump the major (`"2.0"`).
+- **Backwards-compatible additions** — new constraint types, new option
+  fields with defaults, new response extension fields — bump the minor
+  (`"1.1"`).
+
+## Comparison
+
+Servers compare versions **numerically**, not lexicographically. So:
+
+```
+"1.10" > "1.2"     ✓ (10 > 2)
+"1.10" > "1.2"     ✗ (string compare)
+```
+
+A v1.x server MUST accept any request `protocol_version` matching
+`^1\.\d+$` and SHOULD ignore unknown additive fields. A request with a
+different major version MUST be rejected with `version_unsupported`.
+
+## Multi-major servers
+
+A server MAY support multiple major protocol versions concurrently and
+dispatch based on the request's `protocol_version`. The
+`extensions.MMCP_motion.version` in the response always echoes the
+version actually served.
+
+## What clients should do
+
+1. Read `Capabilities.protocol_version` once at startup.
+2. Send your request with the protocol version you implemented against.
+3. Treat unknown response fields as additive — log them, don't crash.
+4. On `version_unsupported`, surface a clear error to the user with a
+   pointer to upgrade the plugin.
+
+:::tip[Don't pin to minor]
+Pin your client to the **major** version, not the exact minor. A v1.0
+client should send `"protocol_version": "1.0"` and accept responses from
+any v1.x server. New minor versions are opt-in via new request fields,
+which old clients never send.
+:::

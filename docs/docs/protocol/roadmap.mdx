@@ -1,0 +1,100 @@
+---
+id: roadmap
+title: Roadmap
+description: What's deferred to future versions of the protocol and the SDK, and what lives only in the cloud product.
+sidebar_position: 2
+---
+
+# Roadmap
+
+The v1 protocol surface is intentionally small. The items below split
+across three buckets:
+
+1. **Protocol additions** — features that need a wire-format change.
+   Land as minor versions (`1.1`, `1.2`, …) when there's a concrete use
+   case behind them.
+2. **SDK additions** — features that any conforming server could ship.
+   No protocol change required. Will land in the open-source
+   `motionmcp` package over time.
+3. **Cloud-only** — features that only make sense as a hosted service.
+   Won't ship in the open-source SDK. Available through the cloud
+   product, which any MMCP-compliant client can hit — the wire format
+   is the same.
+
+If something you need isn't here, open an issue on
+[GitHub](https://github.com/animatica-ai/motionmcp).
+
+## 1 — Protocol additions (future minor versions)
+
+Each lands additively — clients on `v1.0` keep working.
+
+- **Streaming progress** — SSE on `/generate/stream` for diffusion-step
+  progress and partial frames.
+- **Per-finger and facial constraint primitives** — `finger_pose`,
+  `face_blend`. v1 deliberately omits these to keep the constraint set
+  reviewable.
+- **Sparse-keyframe responses** — bezier handles instead of dense
+  linear channels, for clip sizes that scale with motion complexity
+  rather than duration.
+- **Round-trip motion editing** — sending an existing motion as input
+  alongside constraints for refinement.
+- **Vendor extensions** — formal `extensions.<vendor>_*` blocks in the
+  response, for backbones that want to surface metadata not yet in core.
+
+How additions land: server advertises a new capability (e.g. a new
+constraint type), client opts in by sending it. Old clients ignore
+unknown capabilities; new servers ignore unknown additive request
+fields. See **[Versioning →](./versioning)**.
+
+## 2 — SDK additions (open-source `motionmcp`)
+
+All of these will ship in the open-source SDK in future versions —
+they're just not there yet.
+
+- **Async jobs** — `POST /generate` returning `202 Accepted` with a
+  `Location` for `GET /generate/jobs/{id}` polling. Server-side queue +
+  result retention.
+- **Idempotency cache** — honoring `Idempotency-Key` per the protocol's
+  `SHOULD`. In-memory by default, pluggable backend for Redis etc.
+- **Binary glTF** (`model/gltf-binary`) — `.glb` responses for
+  multi-sample or long clips, no base64 overhead.
+- **fps resampling** — server-side slerp/lerp between request fps and
+  the model's native fps, so clients can request whatever fps suits
+  their pipeline.
+- **OpenTelemetry hooks** — span-based tracing for `/capabilities` and
+  `/generate`, request id propagation.
+
+## 3 — Cloud-only
+
+These are deliberately not in the open-source SDK. They need ML
+expertise, hosted infrastructure, or run-cost economics that don't
+make sense for a single-machine setup. The cloud product surfaces
+them behind the same MMCP wire contract — any client written against
+the protocol works.
+
+- **Skeleton retargeting** — accept any client skeleton (Mixamo,
+  Maya HumanIK, Unreal mannequin, custom rigs) and retarget under the
+  hood. The OSS path requires the canonical skeleton from
+  `/capabilities`; the cloud lifts that constraint.
+- **Hosted GPU compute** — pay-per-generate without the user managing
+  weights, drivers, or autoscaling.
+- **Multi-tenant auth + billing** — token-based access, usage
+  metering, rate limit tiers.
+- **Batch + scheduled generation** — long-running jobs measured in
+  hundreds of samples or many-minute clips.
+- **Trained-model hosting** — quality and fast variants, A/B'd model
+  versions, opt-in to newer models without re-deploying anything.
+
+If you need any of these, the cloud is the easier path. See
+**[Servers & clients →](../get-started/implementations)** for the full
+catalog of supported pieces.
+
+## Contributing to the protocol
+
+The protocol is defined by these docs. Source lives in the
+[motionmcp repo](https://github.com/animatica-ai/motionmcp). Open an
+issue or PR.
+
+For protocol-shaping discussions (new constraint types, new option
+fields), file an issue first describing the use case before opening a
+PR — the goal is to keep the surface small.

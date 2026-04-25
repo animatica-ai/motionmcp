@@ -1,0 +1,71 @@
+---
+id: async
+title: Async generation
+description: Models that take long enough to need a 202-and-poll flow.
+sidebar_position: 6
+---
+
+# Async generation
+
+Models that advertise `supports_async: true` MAY return `202 Accepted` to
+a `POST /generate` request instead of `200`.
+
+## The 202 response
+
+- Sets `Location: /generate/jobs/{id}` pointing at the poll endpoint.
+- Sets `Retry-After: <seconds>` as a polling hint.
+- Has an empty body, or a small JSON object:
+  ```json
+  { "job_id": "abc123", "submitted_at": "2025-04-25T11:32:18Z" }
+  ```
+
+## Polling
+
+```
+GET /generate/jobs/{id}
+```
+
+| Status | Meaning |
+|---|---|
+| `200 OK` | Generation complete; body is the glTF document |
+| `202 Accepted` | Still running; honor `Retry-After` |
+| `4xx` / `5xx` | Failed; body is the standard error envelope |
+
+Servers SHOULD retain completed job results for at least 5 minutes. After
+expiry, polling returns `404 Not Found`.
+
+Servers MAY cancel a pending job via `DELETE /generate/jobs/{id}`
+(`204 No Content`).
+
+## Client requirements
+
+Async is **OPTIONAL** in v1.0, but clients MUST be prepared to handle
+either a synchronous `200` or an asynchronous `202` from `POST /generate`,
+gated on the model's `supports_async` flag.
+
+A reasonable client loop:
+
+```python
+resp = httpx.post("/generate", json=req)
+if resp.status_code == 200:
+    return resp  # done
+if resp.status_code == 202:
+    job_url = resp.headers["Location"]
+    delay = int(resp.headers.get("Retry-After", 2))
+    while True:
+        time.sleep(delay)
+        poll = httpx.get(job_url)
+        if poll.status_code == 200:
+            return poll
+        if poll.status_code == 202:
+            delay = int(poll.headers.get("Retry-After", delay))
+            continue
+        raise generate_error(poll)
+raise generate_error(resp)
+```
+
+:::caution[Don't poll faster than `Retry-After`]
+Servers SHOULD return a `Retry-After` on every `202`. The value may grow
+or shrink as the queue moves; clients SHOULD use the latest value rather
+than a fixed interval.
+:::

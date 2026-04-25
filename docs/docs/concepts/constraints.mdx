@@ -1,0 +1,116 @@
+---
+id: constraints
+title: Constraints
+description: Spatial pins for the root, effectors, and individual poses.
+sidebar_position: 3
+---
+
+# Constraints
+
+Constraints are spatial pins layered on top of segments. Three primitives
+exist in v1: `root_path`, `effector_target`, and `pose_keyframe`.
+
+All constraints carry a `type` discriminator. Frames are zero-indexed and
+reference the **global** timeline of the request (after segments compose).
+The total number of frames is:
+
+- `sum(segments[].duration_frames)` when `segments` is non-empty, or
+- `request.duration_frames` when `segments` is empty (constraints-only).
+
+Frame indices outside `[0, total_frames - 1]` cause `frame_out_of_range`.
+
+## World frame
+
+Positions in constraints are in the client's world coordinate frame.
+
+Servers MAY internally re-center the motion (for example, translating
+constraint positions so the earliest-frame root pin sits at `(x=0, z=0)`
+to stay inside the model's training distribution) as long as the response
+is un-translated back to the client's frame before encoding.
+
+Clients MUST NOT assume generated motion starts at world origin — it
+starts wherever your constraints place the root.
+
+## Best-effort
+
+Constraints are best-effort: the backbone honors them as closely as it can
+within the prompt and the model's training distribution. There is **no
+protocol-level guarantee of exact satisfaction**.
+
+## `root_path`
+
+Floor-plane trajectory for the character's root.
+
+```json
+{
+  "type": "root_path",
+  "frames": [0, 30, 60, 90],
+  "positions_xz": [[0.0, 0.0], [1.0, 0.0], [2.0, 1.0], [2.0, 2.0]],
+  "heading_radians": [0.0, 0.0, 0.5, 1.0]
+}
+```
+
+`positions_xz` is the horizontal world position at each frame.
+`heading_radians` is optional; when present it specifies the body's facing
+angle as a **right-handed rotation about the +Y axis**, where `0` faces
+the +Z direction and positive values rotate +Z toward −X.
+
+## `effector_target`
+
+World-space targets for a named joint, typically a hand or foot.
+
+```json
+{
+  "type": "effector_target",
+  "joint": "LeftHand",
+  "frames": [40, 60, 80],
+  "positions": [[0.5, 1.2, 0.3], [0.6, 1.4, 0.4], [0.5, 1.2, 0.3]],
+  "rotations": [[0,0,0,1], [0,0,0,1], [0,0,0,1]]
+}
+```
+
+`positions` are world-space `(x, y, z)`. `rotations`, if given, are
+**local-to-parent** quaternions for the joint at each frame (same
+convention as `pose_keyframe.joint_rotations`). `rotations` is optional.
+
+The joint name MUST exist in the request's `skeleton.joints`.
+
+## `pose_keyframe`
+
+A pose at a single frame.
+
+```json
+{
+  "type": "pose_keyframe",
+  "frame": 30,
+  "joint_rotations": {
+    "LeftArm":  [0.707, 0.0, 0.707, 0.0],
+    "RightArm": [0.707, 0.0, -0.707, 0.0]
+  },
+  "root_position": [1.0, 0.95, 0.0],
+  "fill_mode": "generate"
+}
+```
+
+`joint_rotations` is a sparse map of `{joint_name: local_rotation_quat}`.
+`root_position` is optional.
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `fill_mode` | `"rest"` \| `"generate"` | `"generate"` | Behavior for joints **not** listed in `joint_rotations` |
+
+Fill mode semantics:
+
+- **`rest`** — unspecified joints are pinned to their `rest_rotation` at
+  this frame.
+- **`generate`** — unspecified joints are unconstrained; the backbone
+  generates them as part of the motion. The constraint pins only the
+  listed joints.
+
+:::tip[Densifying poses on the client]
+If you want "key pose A at frame 30, key pose B at frame 60, model fills
+the middle on specified joints only," densify by emitting one
+`pose_keyframe` per intermediate frame with slerped joint rotations
+(linear in frame index) and `fill_mode: "generate"`. This pattern is
+intentionally client-side; the server does not collate keyframes.
+:::

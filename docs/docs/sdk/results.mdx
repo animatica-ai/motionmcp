@@ -1,0 +1,142 @@
+---
+id: results
+title: MotionResult
+description: The shape generate() returns. Rotations, translations, contacts, chunks.
+sidebar_position: 4
+---
+
+# MotionResult
+
+`MotionResult` is what your `generate()` method returns. The SDK validates
+the shape and encodes it to glTF.
+
+```python
+from motionmcp import MotionResult
+import numpy as np
+
+MotionResult(
+    rotations=np.zeros((1, 30, 5, 4), dtype=np.float32),       # (B, T, J, 4)
+    root_translations=np.zeros((1, 30, 3), dtype=np.float32),  # (B, T, 3)
+    # all of these are optional:
+    joint_names=None,
+    foot_contacts={},
+    chunk_boundaries=None,
+    canonical_to_request=None,
+)
+```
+
+## Required fields
+
+### `rotations` — `(B, T, J, 4)` float32
+
+Per-frame **local-to-parent** rotation quaternions in `(x, y, z, w)`
+order — the glTF 2.0 convention.
+
+- `B` = number of samples (matches `request.options.num_samples`).
+- `T` = number of frames (matches `request.total_frames`).
+- `J` = number of joints (matches `len(request.skeleton.joints)`).
+
+Quaternion order is enforced — wrong order in your model output will
+produce visually broken motion. If your model emits matrices instead, use
+`motionmcp.gltf.matrices_to_quats(matrices)` to convert.
+
+### `root_translations` — `(B, T, 3)` float32
+
+Per-frame world-space root position. Y-up, meters.
+
+The SDK doesn't translate this on the wire — it goes to glTF as-is. If
+your model produces normalised coordinates, scale them yourself.
+
+## Optional fields
+
+### `joint_names: Sequence[str] | None`
+
+The model-side joint order matching `rotations`'s J axis. Defaults to
+the request skeleton's joint order. Provide this only if your model
+retargeted internally and you need to declare a different output order.
+
+The SDK validates that `joint_names` matches the request skeleton's
+joint names exactly — same names, same order. If they don't match,
+encoding raises and the SDK returns `500 internal_error`.
+
+### `foot_contacts: dict[str, np.ndarray]`
+
+Per-joint per-frame contact booleans. Each value is a `(B, T)` bool
+array. Joint names must exist in the request skeleton.
+
+```python
+MotionResult(
+    rotations=...,
+    root_translations=...,
+    foot_contacts={
+        "LeftHeel":  np.array([[True, True, False, ...]]),
+        "LeftToe":   np.array([[True, True, True,  ...]]),
+        "RightHeel": np.array([[False, False, True, ...]]),
+        "RightToe":  np.array([[False, True, True, ...]]),
+    },
+)
+```
+
+The SDK serialises these into `extensions.MMCP_motion.samples[].foot_contacts`.
+Clients use them for cleanup, dopesheet coloring, or trigger logic.
+
+### `chunk_boundaries: Sequence[Sequence[int]] | None`
+
+Per-sample list of frame indices where the server stitched internal
+chunks. Empty list (or `None`) means no stitching.
+
+```python
+MotionResult(
+    rotations=...,
+    root_translations=...,
+    chunk_boundaries=[
+        [120, 240],   # sample 0: stitched at frames 120, 240
+        [120, 240],   # sample 1
+    ],
+)
+```
+
+Surfaces in `extensions.MMCP_motion.samples[].chunk_boundaries`. Useful
+for clients that want to highlight the seams or run extra smoothing
+through them.
+
+### `canonical_to_request: dict[str, str] | None`
+
+If your model retargeted from its own canonical skeleton to the
+request's skeleton, declare the mapping here. Echoed in
+`extensions.MMCP_motion.canonical_to_request`. Servers with
+`supports_retargeting=False` should leave this as `None`.
+
+```python
+MotionResult(
+    rotations=...,
+    root_translations=...,
+    canonical_to_request={
+        "Hips":      "mixamorig:Hips",
+        "LeftHand":  "mixamorig:LeftHand",
+        # ...
+    },
+)
+```
+
+## Validation
+
+The dataclass `__post_init__` validates the shapes against each other:
+
+- `rotations` is `(B, T, J, 4)` and `root_translations` is `(B, T, 3)` —
+  `B` and `T` must match.
+- Each `foot_contacts[name]` is `(B, T)`.
+
+Mismatches raise `ValueError` immediately, before the SDK encodes
+anything. Anything you fail to validate yourself becomes a
+`500 internal_error` to the client.
+
+## Properties
+
+Convenience accessors:
+
+```python
+result.num_samples   # B
+result.num_frames    # T
+result.num_joints    # J
+```

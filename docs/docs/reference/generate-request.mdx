@@ -1,0 +1,127 @@
+---
+id: generate-request
+title: GenerateRequest
+description: The body of a POST /generate call — every field, top to bottom.
+sidebar_position: 3
+---
+
+# GenerateRequest
+
+The body of `POST /generate`.
+
+## Top-level shape
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `protocol_version` | string matching `^\d+\.\d+$` | yes | Wire version. A v1.x server MUST accept any value matching `^1\.\d+$` and MAY refuse other majors with `version_unsupported` |
+| `model` | string | yes | One of `Capabilities.models[].id` |
+| `skeleton` | [`Skeleton`](../concepts/skeleton) | yes | The character's skeleton; must be sent every time |
+| `segments` | [`Segment[]`](../concepts/segments) | no, default `[]` | Discriminated union of `TextSegment` and `UnconditionedSegment`. At least one of `segments` or `constraints` must be non-empty |
+| `constraints` | [`Constraint[]`](../concepts/constraints) | no, default `[]` | See constraint primitives |
+| `duration_frames` | int (> 0) | conditional | **Required** when `segments` is empty (constraints-only); **forbidden** when `segments` is non-empty |
+| `timing` | `{ "fps": number }` | no | If set, frames are interpreted in this fps and the response is resampled. See [Timing →](../concepts/timing) |
+| `options` | [`Options`](#options) | no, default object | Generation hyperparameters |
+
+The `skeleton` is **required in every request**. A backbone with
+`supports_retargeting=false` MUST be sent its `canonical_skeleton`
+verbatim; otherwise the server returns `400`. A backbone with retargeting
+accepts any skeleton.
+
+## Options
+
+```json
+{
+  "diffusion_steps": 100,
+  "num_samples": 1,
+  "seed": 42,
+  "post_processing": true,
+  "transition_frames": 5,
+  "guidance": {
+    "type": "separated",
+    "weight": [2.0, 2.0]
+  }
+}
+```
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `diffusion_steps` | int (1–500) | 100 | Backbone-specific; ignored by non-diffusion models |
+| `num_samples` | int (1–`model.limits.max_num_samples`) | 1 | Independent samples per request. Samples differ only in stochastic backbone choices (e.g. distinct initial noise drawn from the shared RNG stream) |
+| `seed` | int \| null | null | RNG seed for reproducibility. Fixes the RNG state before generation, making the full `(seed, num_samples)` tuple deterministic |
+| `post_processing` | bool | true | Foot-skate cleanup, root correction (backbone-specific) |
+| `transition_frames` | int (0–60) | 5 | Blend window between segments. Rotations blend via slerp; root translation blends linearly |
+| `guidance.type` | `"nocfg"` \| `"regular"` \| `"separated"` | backbone default | Classifier-free guidance mode |
+| `guidance.weight` | float[] | backbone default | Length 1 for `regular`, length 2 for `separated`, length 0 (or omitted) for `nocfg` |
+
+Backbones that don't implement an option MAY ignore it; they MUST NOT
+fail.
+
+:::note[Reproducibility caveat]
+Re-sending an identical request with the same `seed` and `num_samples`
+yields an identical response. Clients that need to reproduce an
+individual sample from a multi-sample response should re-request with the
+same seed and sample count, then pick the same index — servers do **not**
+guarantee that sample `i` is reproducible via a separate `num_samples: 1`
+request with a derived seed.
+:::
+
+## Examples
+
+### Minimal — text-only
+
+```json
+{
+  "protocol_version": "1.0",
+  "model": "kimodo-soma-rp",
+  "skeleton": { "joints": [ /* model's canonical skeleton */ ] },
+  "segments": [{ "type": "text", "prompt": "a person walks forward", "duration_frames": 90 }]
+}
+```
+
+### Multi-segment with unconditioned bridge
+
+```json
+{
+  "protocol_version": "1.0",
+  "model": "kimodo-soma-rp",
+  "skeleton": { "joints": [ /* … */ ] },
+  "segments": [
+    { "type": "text",          "prompt": "person walks forward", "duration_frames": 90 },
+    { "type": "unconditioned", "duration_frames": 30 },
+    { "type": "text",          "prompt": "then sits down",       "duration_frames": 60 }
+  ],
+  "options": { "seed": 42, "transition_frames": 8 }
+}
+```
+
+### Constraints + custom skeleton
+
+```json
+{
+  "protocol_version": "1.0",
+  "model": "kimodo-soma-rp",
+  "skeleton": {
+    "joints": [
+      { "name": "Hips",     "parent": null,    "rest_translation": [0, 0.95, 0],    "rest_rotation": [0, 0, 0, 1] },
+      { "name": "Spine",    "parent": "Hips",  "rest_translation": [0, 0.10, 0],    "rest_rotation": [0, 0, 0, 1] },
+      { "name": "LeftArm",  "parent": "Spine", "rest_translation": [0.18, 0.30, 0], "rest_rotation": [0, 0, 0, 1] }
+    ],
+    "coordinate_system": "right_handed_y_up",
+    "units": "meters"
+  },
+  "segments": [{ "type": "text", "prompt": "wave hello", "duration_frames": 60 }],
+  "constraints": [
+    {
+      "type": "root_path",
+      "frames": [0, 30, 60],
+      "positions_xz": [[0,0], [0.5,0], [1,0]]
+    },
+    {
+      "type": "effector_target",
+      "joint": "LeftArm",
+      "frames": [0, 30, 59],
+      "positions": [[0.5, 1.4, 0.2], [0.6, 1.6, 0.3], [0.5, 1.4, 0.2]]
+    }
+  ]
+}
+```

@@ -1,0 +1,97 @@
+---
+id: skeleton
+title: Skeletons
+description: How MMCP describes a character — joints, parents, rest pose.
+sidebar_position: 1
+---
+
+# Skeletons
+
+Every request carries the character's `skeleton` verbatim. There is no
+upload step, no preregistration, no file format. Joint identity is the
+**joint name** — a UTF-8 string, case-sensitive, unique within the
+skeleton.
+
+## Shape
+
+```json
+{
+  "joints": [
+    {
+      "name": "Hips",
+      "parent": null,
+      "rest_translation": [0.0, 0.95, 0.0],
+      "rest_rotation": [0.0, 0.0, 0.0, 1.0]
+    },
+    {
+      "name": "Spine",
+      "parent": "Hips",
+      "rest_translation": [0.0, 0.10, 0.0],
+      "rest_rotation": [0.0, 0.0, 0.0, 1.0]
+    }
+  ],
+  "coordinate_system": "right_handed_y_up",
+  "units": "meters"
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `joints` | array | Order: every joint's parent must appear before the joint itself |
+| `joints[].name` | string | UTF-8 NFC, case-sensitive, 1–128 codepoints; no control characters or leading/trailing whitespace; unique within the skeleton |
+| `joints[].display_name` | string \| null | Optional human-readable name. Echoed in errors; ignored elsewhere |
+| `joints[].parent` | string \| null | Parent joint name. Exactly one joint MUST have `parent: null` (the root) |
+| `joints[].rest_translation` | `[x, y, z]` | Local-space, relative to parent. Meters |
+| `joints[].rest_rotation` | `[x, y, z, w]` | Local-space quaternion, relative to parent. glTF order |
+| `coordinate_system` | `"right_handed_y_up"` | Required value in v1 |
+| `units` | `"meters"` | Required value in v1 |
+
+## Canonical vs custom
+
+Servers publish a **canonical skeleton** in `/capabilities`. It's what the
+model was trained on.
+
+- A backbone with `supports_retargeting: false` MUST be sent its canonical
+  verbatim. Otherwise the server returns `400 retargeting_unsupported`.
+- A backbone with `supports_retargeting: true` accepts any skeleton. The
+  server retargets internally and returns animation on the joint names you
+  sent.
+
+**Most production servers support retargeting** — you should normally just
+send the user's actual skeleton.
+
+## Rest pose convention
+
+Servers publishing a canonical skeleton SHOULD position it as a **standing
+rest**: the root's `rest_translation` chosen so the character's lowest
+joint (typically a foot) sits at `y = 0`. Clients that import the
+canonical to build a rig then see a standable pose, and generated motion
+without an explicit `root_position` pin starts at the same standing height
+rather than at world origin.
+
+## display_name
+
+Lets you keep pipeline-style names in the wire field while showing an
+animator-friendly version in error messages:
+
+```json
+{
+  "name": "Character1:Reference:Hips",
+  "display_name": "Hips",
+  "parent": null,
+  "rest_translation": [0, 0.95, 0],
+  "rest_rotation": [0, 0, 0, 1]
+}
+```
+
+The server SHOULD echo `display_name` verbatim in error messages and
+ignore it for everything else.
+
+## Validation
+
+The server returns `400 invalid_skeleton` if your skeleton:
+
+- has no root or multiple roots,
+- contains a cycle,
+- references a non-existent parent, or
+- lists a joint before its parent.

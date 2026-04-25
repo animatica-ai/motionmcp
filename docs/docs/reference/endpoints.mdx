@@ -1,0 +1,58 @@
+---
+id: endpoints
+title: HTTP endpoints
+description: The three endpoints that make up MMCP v1.
+sidebar_position: 1
+---
+
+# HTTP endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/capabilities` | Discover available models and their canonical skeletons |
+| `POST` | `/generate` | Run motion generation (sync, or async if `supports_async`) |
+| `GET` | `/generate/jobs/{id}` | Poll an async generation job (only when the model advertises `supports_async: true`) |
+
+That's the entire surface.
+
+## Transport
+
+- Requests MUST set `Content-Type: application/json; charset=utf-8`.
+- Clients MAY set `Accept: model/gltf-binary` to request a binary glTF
+  (`.glb`) response. Servers that support it return `model/gltf-binary`;
+  otherwise they return `model/gltf+json`. Servers MUST support
+  `model/gltf+json`. `model/gltf-binary` is OPTIONAL but strongly
+  recommended for responses with `num_samples > 1` or long durations.
+- Auth and rate limiting are deployment concerns; servers SHOULD emit
+  `Retry-After` on `429` and `503` responses (RFC 7231).
+- Servers SHOULD return an `X-Request-ID` header for tracing.
+
+## Idempotency
+
+Servers SHOULD honor an `Idempotency-Key` request header. The TTL SHOULD
+be at least 60 seconds.
+
+If the same key arrives with a *different* request body, the server MUST
+return `409 Conflict`.
+
+Servers MAY decline to honor idempotency for expensive requests (e.g.
+`num_samples > 1` or long durations); when declined, they MUST emit
+response header `Idempotency-Status: declined` so clients do not assume
+the operation is safe to retry.
+
+## Status codes — `POST /generate`
+
+| Code | Meaning |
+|---|---|
+| `200 OK` | Generation succeeded; body is a glTF document |
+| `400 Bad Request` | Schema-valid but semantically invalid (unknown model, unsupported constraint, retargeting unsupported, unknown joint name) |
+| `401 Unauthorized` | Missing or invalid credentials (when auth is required) |
+| `403 Forbidden` | Authenticated but not permitted |
+| `413 Payload Too Large` | Request body exceeds `model.limits.max_request_bytes` |
+| `422 Unprocessable Entity` | Request fails schema validation |
+| `429 Too Many Requests` | Rate-limited; clients SHOULD respect `Retry-After` |
+| `503 Service Unavailable` | Server initializing or overloaded; SHOULD include `Retry-After` |
+| `504 Gateway Timeout` | Generation exceeded the server-side deadline |
+
+See **[Errors →](./errors)** for the standard error envelope and code
+list.

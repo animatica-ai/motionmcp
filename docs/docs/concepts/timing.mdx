@@ -1,0 +1,99 @@
+---
+id: timing
+title: Frames & timing
+description: Frame counts, fps, and how the protocol handles resampling.
+sidebar_position: 4
+---
+
+# Frames & timing
+
+All times in the protocol are expressed as **frame counts**, not seconds.
+
+This includes:
+
+- `segments[].duration_frames`
+- `request.duration_frames`
+- constraint `frames` / `frame`
+- `Options.transition_frames`
+
+Clients that author in seconds convert with:
+
+```
+frames = round(seconds × fps)
+```
+
+Where `fps` is `request.timing.fps` if set, or otherwise
+`Capabilities.models[].fps`.
+
+Capability fields like `max_duration_seconds` and `native_clip_seconds`
+remain in seconds because they describe model properties independent of
+any request.
+
+## `request.timing`
+
+```json
+{
+  "timing": { "fps": 24.0 }
+}
+```
+
+When set:
+
+- All frame counts and indices in the request (segments, constraints,
+  `duration_frames`) are interpreted in this fps.
+- The response glTF is **resampled** to this fps — slerp for rotations,
+  linear interpolation for translations.
+
+When omitted, frames are in the model's native fps and the response is at
+the model's native fps.
+
+:::caution[Resampling quality]
+Resampling is best-effort. Clients needing precise low-fps results SHOULD
+request the model's native fps and resample themselves.
+:::
+
+## Native vs requested fps
+
+Capabilities tell you both:
+
+```json
+{
+  "id": "kimodo-soma-rp",
+  "fps": 30.0,
+  "native_clip_seconds": 10.0,
+  "chunking": "stitched",
+  "recommended_max_duration_seconds": 12.0
+}
+```
+
+- `fps` — the model's native frame rate.
+- `native_clip_seconds` — the duration the model was trained on. Requests
+  beyond this are stitched per `chunking`.
+- `chunking: "stitched"` — server may chunk longer requests internally.
+  Visible seam quality is best-effort beyond `recommended_max_duration_seconds`.
+- `recommended_max_duration_seconds` — the comfort zone. Clients SHOULD
+  warn the user past this point.
+
+## Chunk boundaries (response)
+
+When the server stitches, it lists the seam frames in the response so
+clients can recolor those frames in their dopesheet, run smoothing, or
+warn the user:
+
+```json
+{
+  "extensions": {
+    "MMCP_motion": {
+      "samples": [
+        {
+          "name": "sample_0",
+          "num_frames": 360,
+          "chunk_boundaries": [120, 240]
+        }
+      ]
+    }
+  }
+}
+```
+
+`chunk_boundaries` is an empty array when the request fit in one chunk.

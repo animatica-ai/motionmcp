@@ -1,0 +1,122 @@
+---
+id: implementations
+title: Servers & clients
+description: Officially supported MMCP servers and clients, plus the path to building your own.
+sidebar_position: 5
+---
+
+# Servers & clients
+
+MMCP is a protocol — anyone can implement either side. The implementations
+listed here are **officially supported**: maintained in the same project,
+released against each protocol version, and used as reference
+implementations when designing the protocol itself.
+
+If you build a server or client and want it listed here, open an issue
+on [GitHub](https://github.com/animatica-ai/motionmcp).
+
+## Officially supported servers
+
+| Server | Backbone | License | Status |
+|---|---|---|---|
+| **[motionmcp-kimodo][kimodo]** | Kimodo SOMA family | Apache 2.0 | Alpha |
+| **MMCP Cloud** | Hosted, multi-model | Commercial | Beta |
+
+[kimodo]: https://github.com/animatica-ai/motionmcp-kimodo
+
+### motionmcp-kimodo
+
+Wraps the [Kimodo](https://github.com/kimodo/kimodo) motion model in
+`motionmcp.Backbone`. Run on your own hardware; clients send the
+model's canonical skeleton verbatim.
+
+Install from source:
+
+```bash
+git clone https://github.com/animatica-ai/motionmcp-kimodo
+cd motionmcp-kimodo
+pip install -e .
+
+motionmcp-kimodo --port 8000
+```
+
+See the [motionmcp-kimodo repo][kimodo] for the full README and
+configuration options.
+
+### MMCP Cloud
+
+The hosted product. Same protocol, plus skeleton retargeting (any rig),
+hosted GPUs, batch generation, multi-tenant auth, and managed model
+versions. See **[Roadmap → Cloud-only](../protocol/roadmap#3--cloud-only)**
+for the full scope.
+
+## Officially supported clients
+
+| Client | Host | License | Status |
+|---|---|---|---|
+| **[Proscenium for Blender][proscenium]** | Blender 4.2+ | Apache 2.0 | Alpha |
+
+[proscenium]: https://github.com/animatica-ai/proscenium-blender
+
+### Proscenium
+
+A Blender addon for directable motion generation. Set keyframes, prompt
+the model, regenerate the rest. Talks MMCP — works against any
+compliant server.
+
+Install from source:
+
+```bash
+git clone https://github.com/animatica-ai/proscenium-blender
+cd proscenium-blender
+make zip   # → dist/proscenium-blender-X.Y.Z.zip
+```
+
+Then in Blender: **Edit → Preferences → Add-ons → Install…**, pick the
+zip, and tick **Proscenium — AI Motion Generation**.
+
+Configure the server URL:
+
+1. **Edit → Preferences → Add-ons → Proscenium → Preferences**
+2. Set `Server` to your MMCP endpoint (e.g. `http://localhost:8000`).
+
+The plugin discovers the model via `/capabilities` and dispatches
+`/generate` against the configured URL. See the
+[Proscenium repo][proscenium] for the full README.
+
+## Build your own
+
+The protocol surface is small enough that hand-rolling either side is
+a reasonable hour-long project.
+
+### A new server backbone
+
+Subclass `motionmcp.Backbone`:
+
+```python
+from motionmcp import Backbone, ModelSpec, MotionResult, serve
+
+class MyBackbone(Backbone):
+    def capabilities(self) -> ModelSpec: ...
+    async def generate(self, req): ...
+
+serve(MyBackbone())
+```
+
+See **[SDK →](../sdk/)** for the full surface, and
+**[motionmcp-kimodo source][kimodo]** for a real-world reference.
+
+### A new client
+
+Two HTTP calls (`GET /capabilities`, `POST /generate`) and a glTF
+parser. See:
+
+- **[Quickstart (client) →](./quickstart-client)** — raw HTTP / curl walkthrough.
+- **[Concepts →](../concepts/skeleton)** — the wire-format primitives
+  (skeletons, segments, constraints, timing).
+- **[Reference →](../reference/endpoints)** — every field, every
+  status code.
+
+The protocol is language-agnostic; the only hard requirement is a glTF
+2.0 parser for the response side. Most DCC tools (Blender, Maya,
+Houdini, Unity, Unreal, three.js) ship one.

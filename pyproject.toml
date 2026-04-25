@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "motionmcp"
+version = "0.1.0"
+description = "Python SDK for MMCP — the Motion Model Context Protocol. Build a vendor-neutral motion-generation server in ~30 lines."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [{ name = "MMCP contributors" }]
+keywords = ["mmcp", "motion", "animation", "gltf", "ai", "diffusion", "skeleton"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    "Topic :: Software Development :: Libraries",
+]
+
+dependencies = [
+    "pydantic>=2.5",
+    "numpy>=1.24",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+    "ruff>=0.4",
+]
+
+[project.urls]
+Homepage    = "https://mmcp.dev"
+Source      = "https://github.com/animatica-ai/motionmcp"
+Issues      = "https://github.com/animatica-ai/motionmcp/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/motionmcp"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/motionmcp", "tests", "examples", "README.md", "LICENSE"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

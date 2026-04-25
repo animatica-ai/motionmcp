@@ -1,0 +1,110 @@
+---
+id: null-backbone
+title: NullBackbone
+description: Reference implementation that returns the rest pose. For dev and tests.
+sidebar_position: 7
+---
+
+# NullBackbone
+
+`NullBackbone` is a reference `Backbone` that returns the rest pose for
+every request. It exists so DCC plugin authors can develop against a
+real MMCP server with **zero ML or GPU dependencies**.
+
+## Run it
+
+The package ships a CLI entry point:
+
+```bash
+python -m motionmcp.null_backbone
+# → MMCP server on :8000, model id "null"
+```
+
+Or programmatically:
+
+```python
+from motionmcp import serve
+from motionmcp.null_backbone import NullBackbone
+
+serve(NullBackbone())
+```
+
+Hit it like any MMCP server:
+
+```bash
+curl -s http://localhost:8000/capabilities | jq
+curl -s http://localhost:8000/generate \
+  -H 'Content-Type: application/json' \
+  -d '{ "protocol_version":"1.0", "model":"null",
+        "skeleton":{"joints":[{"name":"Hips","parent":null,
+                               "rest_translation":[0,0.95,0],
+                               "rest_rotation":[0,0,0,1]}]},
+        "segments":[{"type":"text","prompt":"stand","duration_frames":5}] }'
+```
+
+## Customising
+
+```python
+from motionmcp.null_backbone import NullBackbone
+from motionmcp import Skeleton, Joint, serve
+
+serve(NullBackbone(
+    model_id="my-fake-model",      # what shows up in /capabilities
+    fps=24.0,                      # claim a different fps
+    canonical_skeleton=Skeleton(joints=[
+        Joint(name="Hips", parent=None,
+              rest_translation=(0.0, 0.95, 0.0),
+              rest_rotation=(0.0, 0.0, 0.0, 1.0)),
+        # …your studio's actual skeleton…
+    ]),
+))
+```
+
+This is useful when:
+
+- Your DCC plugin expects a specific skeleton naming.
+- You want to demo your real model id without booting the real model.
+- You're stress-testing transport with `num_samples > 1` or large
+  durations.
+
+## CLI flags
+
+```
+python -m motionmcp.null_backbone --help
+
+usage: motionmcp-null [-h] [--host HOST] [--port PORT] [--model-id MODEL_ID] [--fps FPS]
+
+  --host HOST          default 0.0.0.0
+  --port PORT          default 8000
+  --model-id MODEL_ID  default "null"
+  --fps FPS            default 30.0
+```
+
+## What it returns
+
+For any request, `NullBackbone.generate()` builds:
+
+- `rotations` — identity quaternion `(0, 0, 0, 1)` per joint per frame
+  per sample.
+- `root_translations` — the root joint's `rest_translation`, held
+  constant across all frames.
+
+Multiple samples (`options.num_samples > 1`) all return the same rest
+pose; the SDK still encodes them as separate animations so client code
+that expects N samples works.
+
+## When to graduate
+
+`NullBackbone` is a development aid, not a real motion model. As soon
+as you have actual model weights, swap to your own `Backbone`
+subclass — see **[Backbone →](./backbone)** for the full surface.
+
+You can keep `NullBackbone` registered alongside your real model for
+smoke tests:
+
+```python
+serve({
+    "soma":      MyRealBackbone("weights.pt"),
+    "null":      NullBackbone(model_id="null"),   # cheap probe target
+})
+```

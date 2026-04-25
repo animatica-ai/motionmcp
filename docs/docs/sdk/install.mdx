@@ -1,0 +1,74 @@
+---
+id: install
+title: Install
+description: Install motionmcp and its dependencies.
+sidebar_position: 2
+---
+
+# Install
+
+```bash
+pip install motionmcp
+```
+
+Requires **Python 3.10+**.
+
+## What gets pulled in
+
+| Package | Why |
+|---|---|
+| `pydantic >= 2.5` | Wire-format validation |
+| `numpy >= 1.24` | Backbone IO arrays |
+| `fastapi >= 0.110` | HTTP server |
+| `uvicorn[standard] >= 0.27` | ASGI runner used by `serve()` |
+
+That's the whole tree. There's no torch, no transformer library, no
+glTF dependency — the SDK encodes glTF itself.
+
+## Optional dev extras
+
+For running the test suite or contributing:
+
+```bash
+pip install "motionmcp[dev]"
+```
+
+Adds `pytest`, `httpx` (for FastAPI's test client), and `ruff`.
+
+## Verify the install
+
+```bash
+python -c "import motionmcp; print(motionmcp.__version__)"
+# 0.1.0
+```
+
+Or boot the reference server and curl it:
+
+```bash
+python -m motionmcp.null_backbone &
+curl -s http://localhost:8000/capabilities | jq .protocol_version
+# "1.0"
+```
+
+## In a project
+
+A typical `pyproject.toml`:
+
+```toml
+[project]
+name = "my-motion-server"
+dependencies = [
+    "motionmcp >= 0.1",
+    "torch",         # or whatever your model needs
+    # ...
+]
+```
+
+## Versioning
+
+The SDK API is `0.x` — minor bumps may break you until `1.0`. The
+**protocol** is `v1.0-rc1` — when the SDK ships `1.0` it'll target
+protocol `v1.0` final.
+
+See **[Protocol versioning →](../protocol/versioning)** for how the
+wire format itself evolves.

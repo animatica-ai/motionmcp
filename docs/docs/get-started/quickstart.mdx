@@ -1,0 +1,137 @@
+---
+id: quickstart
+title: Quickstart (server)
+description: Ship a working MMCP server in five minutes using the Python SDK.
+sidebar_position: 2
+---
+
+# Quickstart — server
+
+Building a client instead? See **[Quickstart (client) →](./quickstart-client)**.
+
+## 1 — Install
+
+```bash
+pip install motionmcp
+```
+
+Requires Python 3.10+. Pulls FastAPI, uvicorn, Pydantic, numpy.
+
+## 2 — Try it without writing any code
+
+The package ships with a `NullBackbone` that returns the rest pose for any
+request. It exists so DCC plugin authors can develop against a real
+server with zero ML dependencies.
+
+```bash
+python -m motionmcp.null_backbone
+# → MMCP server on :8000
+```
+
+In another shell:
+
+```bash
+curl -s http://localhost:8000/capabilities | jq
+```
+
+That's a working MMCP server. No model required.
+
+## 3 — Write your own server
+
+The whole thing is one `Backbone` subclass:
+
+```python title="server.py"
+import numpy as np
+from motionmcp import (
+    Backbone, ModelSpec, GenerateRequest,
+    MotionResult, Skeleton, Joint, serve,
+)
+
+class MyBackbone(Backbone):
+    def capabilities(self) -> ModelSpec:
+        return ModelSpec(
+            id="my-model",
+            fps=30.0,
+            canonical_skeleton=Skeleton(joints=[
+                Joint(name="Hips", parent=None,
+                      rest_translation=(0.0, 0.95, 0.0),
+                      rest_rotation=(0.0, 0.0, 0.0, 1.0)),
+            ]),
+            supports_retargeting=False,
+            supported_constraints=["pose_keyframe"],
+        )
+
+    async def generate(self, req: GenerateRequest) -> MotionResult:
+        # Replace this with: rotations, root_translations = self.model.run(req)
+        N = req.options.num_samples if req.options else 1
+        T = req.total_frames
+        J = len(req.skeleton.joints)
+
+        rotations = np.zeros((N, T, J, 4), dtype=np.float32)
+        rotations[..., 3] = 1.0          # identity quat (x,y,z,w)
+        root = np.zeros((N, T, 3), dtype=np.float32)
+
+        return MotionResult(
+            rotations=rotations,
+            root_translations=root,
+        )
+
+if __name__ == "__main__":
+    serve(MyBackbone())
+```
+
+Run it:
+
+```bash
+python server.py
+```
+
+Hit it:
+
+```bash
+curl -s http://localhost:8000/generate \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "protocol_version": "1.0",
+    "model": "my-model",
+    "skeleton": {
+      "joints": [
+        { "name": "Hips", "parent": null,
+          "rest_translation": [0, 0.95, 0],
+          "rest_rotation":    [0, 0, 0, 1] }
+      ]
+    },
+    "segments": [{ "type": "text", "prompt": "stand", "duration_frames": 30 }]
+  }' \
+  > motion.gltf
+```
+
+The response is a standard glTF&nbsp;2.0 document.
+
+## What the SDK is doing for you
+
+Behind that single `generate()` call:
+
+- Parsed and validated the JSON against the MMCP wire schema.
+- Verified `protocol_version`, looked up the model, and ran retargeting
+  policy.
+- Checked every constraint references known joints and frames in range.
+- Encoded your numpy arrays as glTF `bufferViews` and `accessors`.
+- Built the `extensions.MMCP_motion` block (fps, sample names, foot
+  contacts, chunk boundaries).
+- Caught any `ProtocolError` you raise and turned it into the MMCP error
+  envelope with the right HTTP status.
+
+If you'd written that yourself it would be ~300 lines.
+
+## What's next
+
+- **[Backbone reference →](../sdk/backbone)** — the full surface of
+  `ModelSpec`, `MotionResult`, sync vs async, hooks.
+- **[Errors →](../sdk/errors)** — the typed exceptions you raise so the
+  SDK returns the correct error envelope.
+- **[Serving →](../sdk/serving)** — multi-model servers, custom FastAPI
+  mounting, deployment.
+- **[Concepts →](../concepts/skeleton)** — what skeletons, segments,
+  constraints, and timing actually mean. Useful when designing your
+  `generate()` implementation.

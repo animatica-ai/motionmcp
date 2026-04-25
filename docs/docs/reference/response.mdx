@@ -1,0 +1,76 @@
+---
+id: response
+title: Response & extension
+description: The glTF response, plus the MMCP_motion extension that carries non-glTF metadata.
+sidebar_position: 4
+---
+
+# Response
+
+The response body is a **glTF&nbsp;2.0 document**.
+
+`Content-Type` is `model/gltf+json` for JSON glTF or `model/gltf-binary`
+for `.glb`, per `Accept` negotiation.
+
+## What's in it
+
+- A `nodes[]` hierarchy and `skins[]` definition mirroring the request's
+  skeleton (joint names preserved).
+- One `animations[]` entry per generated sample, named `sample_0`,
+  `sample_1`, … Each animation has dense per-frame channels with `LINEAR`
+  interpolation for joint rotations and the root translation.
+- Buffers / bufferViews / accessors backing the animation data. In the
+  JSON variant, buffers are embedded as `data:` URIs; in the binary
+  variant they live in the GLB binary chunk (no base64 overhead).
+- An `extensions.MMCP_motion` block carrying motion metadata that doesn't
+  fit cleanly in glTF. The corresponding `extensionsUsed` entry is
+  `"MMCP_motion"`.
+
+:::tip[Joint set scope]
+Clients SHOULD treat the response's joint set as authoritative for the
+joints listed and leave any *additional* bones in the user's actual rig
+(IK controls, twist bones, fingers, face) to client-side rig logic. The
+response only animates joints that were sent in the request's
+`skeleton.joints`.
+:::
+
+## `extensions.MMCP_motion`
+
+```json
+{
+  "version": "1.0",
+  "model": "kimodo-soma-rp",
+  "fps": 30.0,
+  "canonical_to_request": {
+    "Hips": "mixamorig:Hips",
+    "LeftFoot": "mixamorig:LeftFoot"
+  },
+  "samples": [
+    {
+      "name": "sample_0",
+      "num_frames": 150,
+      "chunk_boundaries": [],
+      "foot_contacts": {
+        "LeftHeel":  [true, true, false],
+        "LeftToe":   [true, true, true],
+        "RightHeel": [false, false, true],
+        "RightToe":  [false, true, true]
+      }
+    }
+  ]
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `version` | string | Protocol version that produced this response |
+| `model` | string | Echoed model id |
+| `fps` | number | Frame rate of the animation |
+| `canonical_to_request` | `{ canonical_joint: request_joint }` \| null | Present only when the server retargeted the canonical skeleton to the client's `skeleton`. Maps the canonical joint name (used internally) to the request's joint name (used in `samples[].foot_contacts`). Servers with `supports_retargeting: false` omit this field |
+| `samples[].name` | string | Matches the corresponding `animations[].name` |
+| `samples[].num_frames` | int | Frame count |
+| `samples[].chunk_boundaries` | int[] | Frame indices at which the server stitched internal chunks (relevant when the model declares `chunking: "stitched"`). Empty array when the request fit in one chunk |
+| `samples[].foot_contacts` | `{ joint_name: bool[] }` \| `{ "$accessor": int }` \| null | Per-frame contact state, keyed by joint names from the request's `skeleton.joints`. For long clips, MAY reference an `accessor` (uint8 booleans, length `num_frames × len(joints)`) via `{ "$accessor": <accessor_index> }`; the joint-name → channel-index mapping then lives in `samples[].foot_contact_joints: string[]` |
+
+Clients that don't need the metadata can ignore the extension entirely
+and still get a valid glTF.

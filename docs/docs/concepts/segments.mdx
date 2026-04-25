@@ -1,0 +1,99 @@
+---
+id: segments
+title: Segments
+description: How to compose a motion request from text and unconditioned spans.
+sidebar_position: 2
+---
+
+# Segments
+
+A `Segment` describes one stretch of motion in time. Segments compose
+sequentially — the request's total length is `sum(segments[].duration_frames)`.
+
+Two segment types are defined in v1:
+
+```json
+[
+  { "type": "text",          "prompt": "a person walks forward", "duration_frames": 90 },
+  { "type": "unconditioned", "duration_frames": 30 },
+  { "type": "text",          "prompt": "then sits down",         "duration_frames": 60 }
+]
+```
+
+`Segment` is a **discriminated union** with `type` as the discriminator.
+Future minor versions MAY add types (e.g. `"audio"`, `"motion_reference"`)
+under the same key.
+
+## TextSegment — `type: "text"`
+
+Generates motion conditioned on a natural-language prompt.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `type` | `"text"` | yes | Discriminator |
+| `prompt` | string (UTF-8 NFC, 1–`max_prompt_length` codepoints) | yes | Natural-language description |
+| `duration_frames` | int (> 0) | yes | Length of this segment, in frames at the request's effective fps |
+| `language` | string (BCP-47) | no, default `"en"` | Hint for backbones with multilingual support |
+
+## UnconditionedSegment — `type: "unconditioned"`
+
+Generates motion **without text conditioning** — the backbone runs its
+unconditional path (the null-prompt branch in a CFG model, or whatever
+default trajectory the model produces in absence of a prompt). Use this to:
+
+- bridge two text segments with a natural transition the model picks,
+- fill a constraint-driven span where you have spatial pins but no prompt
+  (e.g. "no text, but pin the right hand here at frame 50"),
+- request idle / neutral motion at the start or end of a clip.
+
+```json
+{ "type": "unconditioned", "duration_frames": 30 }
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `type` | `"unconditioned"` | yes | Discriminator |
+| `duration_frames` | int (> 0) | yes | Length of the span, in frames at the request's effective fps |
+
+Constraints overlapping an unconditioned span are honored on a best-effort
+basis just like anywhere else. The unconditioned span is still motion —
+post-processing applies as usual, and `Options.transition_frames` is
+honored at boundaries with adjacent segments.
+
+## Composing
+
+```json
+{
+  "segments": [
+    { "type": "text",          "prompt": "person walks forward", "duration_frames": 90 },
+    { "type": "unconditioned", "duration_frames": 30 },
+    { "type": "text",          "prompt": "then sits down",       "duration_frames": 60 }
+  ],
+  "options": { "transition_frames": 8 }
+}
+```
+
+`transition_frames` is the blend window at boundaries between segments.
+Rotations blend via slerp; root translation blends linearly.
+
+## Segments vs constraints-only
+
+If `segments` is empty, the request becomes **constraints-only** — the model
+generates motion to satisfy the constraints with no text guidance. In that
+case you MUST set `duration_frames` at the request level:
+
+```json
+{
+  "protocol_version": "1.0",
+  "model": "kimodo-soma-rp",
+  "skeleton": { "joints": [ /* … */ ] },
+  "segments": [],
+  "duration_frames": 90,
+  "constraints": [ /* … */ ]
+}
+```
+
+When `segments` is non-empty, the request-level `duration_frames` MUST be
+omitted — the duration is `sum(segments[].duration_frames)`.
+
+A request with both `segments: []` and `constraints: []` is rejected.
