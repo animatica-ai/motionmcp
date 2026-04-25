@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/motionmcp
+      url: https://pypi.org/p/motionmcp-sdk
     permissions:
       id-token: write
     if: ${{ vars.PUBLISH_TO_PYPI == 'true' }}

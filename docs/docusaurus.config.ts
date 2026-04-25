@@ -102,7 +102,7 @@ const config: Config = {
           label: "Protocol",
         },
         {
-          href: "https://pypi.org/project/motionmcp/",
+          href: "https://pypi.org/project/motionmcp-sdk/",
           position: "right",
           label: "PyPI",
         },
@@ -145,7 +145,7 @@ const config: Config = {
         {
           title: "Project",
           items: [
-            { label: "PyPI", href: "https://pypi.org/project/motionmcp/" },
+            { label: "PyPI", href: "https://pypi.org/project/motionmcp-sdk/" },
             { label: "GitHub", href: "https://github.com/animatica-ai/motionmcp" },
           ],
         },

@@ -61,7 +61,7 @@ any glTF parser.
 ## Install
 
 ```bash
-pip install motionmcp
+pip install motionmcp-sdk
 ```
 
 Requires Python 3.10+.
@@ -107,7 +107,7 @@ Or pass an iterable; ids come from each backbone's `capabilities().id`.
 ## NullBackbone — try it now
 
 ```bash
-pip install motionmcp
+pip install motionmcp-sdk
 python -m motionmcp.null_backbone
 # → MMCP server on :8000, returning rest pose for any request
 ```

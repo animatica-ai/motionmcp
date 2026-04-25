@@ -44,7 +44,7 @@ function Hero() {
           </span>
           <span>
             <strong>Python SDK</strong>
-            <code>pip install motionmcp</code>
+            <code>pip install motionmcp-sdk</code>
           </span>
           <span>
             <strong>Status</strong>
@@ -242,7 +242,7 @@ function SdkCallout() {
               Server quickstart
             </Link>
           </div>
-          <code className={styles.sdkInstall}>pip install motionmcp</code>
+          <code className={styles.sdkInstall}>pip install motionmcp-sdk</code>
         </div>
 
         <div className={styles.sdkCodeCard}>
