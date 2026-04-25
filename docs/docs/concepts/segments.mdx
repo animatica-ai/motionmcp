@@ -10,7 +10,7 @@ sidebar_position: 2
 A `Segment` describes one stretch of motion in time. Segments compose
 sequentially — the request's total length is `sum(segments[].duration_frames)`.
 
-Two segment types are defined in v1:
+Three segment types are defined in v1:
 
 ```json
 [
@@ -21,8 +21,10 @@ Two segment types are defined in v1:
 ```
 
 `Segment` is a **discriminated union** with `type` as the discriminator.
-Future minor versions MAY add types (e.g. `"audio"`, `"motion_reference"`)
-under the same key.
+Servers advertise which types they accept via
+`ModelSpec.supported_segments` in `/capabilities` — clients SHOULD
+check before sending a non-default type. Future minor versions MAY add
+types (e.g. `"audio"`, `"motion_reference"`) under the same key.
 
 ## TextSegment — `type: "text"`
 
@@ -59,6 +61,31 @@ Constraints overlapping an unconditioned span are honored on a best-effort
 basis just like anywhere else. The unconditioned span is still motion —
 post-processing applies as usual, and `Options.transition_frames` is
 honored at boundaries with adjacent segments.
+
+## PoseSegment — `type: "pose"`
+
+Generates **a single pose** — exactly one frame — from a text prompt.
+Distinct from a 1-frame `TextSegment`: the server routes a pose
+segment to a specialized model trained for instantaneous poses, not
+"the first frame of a motion clip".
+
+```json
+{ "type": "pose", "prompt": "person waves hello with their right hand" }
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `type` | `"pose"` | yes | Discriminator |
+| `prompt` | string (1–`max_prompt_length` codepoints) | yes | Natural-language description of the pose |
+| `language` | string (BCP-47) | no, default `"en"` | |
+
+No `duration_frames` field — pose is intrinsically 1 frame.
+
+`PoseSegment` is an **optional** capability. Servers advertise support
+by including `"pose"` in `ModelSpec.supported_segments`. The SDK
+rejects pose segments sent to a model that doesn't claim support, with
+the `unsupported_segment` error code. See
+**[Capabilities reference →](../reference/capabilities)**.
 
 ## Composing
 

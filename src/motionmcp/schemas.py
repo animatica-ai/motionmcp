@@ -73,8 +73,33 @@ class UnconditionedSegment(BaseModel):
     duration_frames: int = Field(..., gt=0)
 
 
+class PoseSegment(BaseModel):
+    """A single-pose generation from text.
+
+    Produces exactly one frame of output. Unlike :class:`TextSegment`,
+    which generates a span of motion, a pose segment is intrinsically
+    instantaneous; it has no ``duration_frames`` field.
+
+    Servers advertise support via ``ModelSpec.supported_segments``
+    (must include ``"pose"``). Backbones without the specialized
+    pose model omit ``"pose"`` from that list, and the SDK rejects
+    pose segments with an ``unsupported_segment`` error before they
+    reach the backbone.
+    """
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["pose"]
+    prompt: str = Field(..., min_length=1)
+    language: str | None = "en"
+
+    # Intrinsic frame count — used by GenerateRequest.total_frames so all
+    # segment types share the same surface. Not present on the wire.
+    @property
+    def duration_frames(self) -> int:
+        return 1
+
+
 Segment = Annotated[
-    TextSegment | UnconditionedSegment,
+    TextSegment | UnconditionedSegment | PoseSegment,
     Field(discriminator="type"),
 ]
 

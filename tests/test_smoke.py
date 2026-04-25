@@ -107,6 +107,58 @@ def test_unsupported_constraint(client: TestClient) -> None:
     # by configuring NullBackbone with a smaller list, instead.
 
 
+def test_pose_segment_unsupported_by_default(client: TestClient) -> None:
+    """NullBackbone defaults to supported_segments=['text','unconditioned']
+    (no 'pose'). A request with a pose segment must fail with
+    `unsupported_segment`."""
+    req = _request_for(client)
+    req["segments"] = [{"type": "pose", "prompt": "stand neutral"}]
+    r = client.post("/generate", json=req)
+    assert r.status_code == 400
+    err = r.json()["error"]
+    assert err["code"] == "unsupported_segment"
+    assert "supported_segments" in err["details"]
+    assert "pose" not in err["details"]["supported_segments"]
+
+
+def test_pose_segment_accepted_when_advertised() -> None:
+    """When a backbone advertises 'pose', the pose segment passes
+    validation and the SDK invokes generate(). NullBackbone returns
+    rest pose for any input shape."""
+    from motionmcp import build_app, ModelSpec, Skeleton
+    from motionmcp.null_backbone import NullBackbone, _default_skeleton
+    from motionmcp.protocol import SUPPORTED_CONSTRAINTS
+
+    class PoseCapableNull(NullBackbone):
+        def capabilities(self) -> ModelSpec:
+            spec = super().capabilities()
+            spec.supported_segments = ["text", "unconditioned", "pose"]
+            return spec
+
+    c = TestClient(build_app(PoseCapableNull()))
+    canonical = c.get("/capabilities").json()["models"][0]["canonical_skeleton"]
+    r = c.post("/generate", json={
+        "protocol_version": "1.0",
+        "model": "null",
+        "skeleton": canonical,
+        "segments": [{"type": "pose", "prompt": "person waves hello"}],
+    })
+    assert r.status_code == 200, r.text
+    gltf = r.json()
+    # Pose segment is intrinsically 1 frame; the response carries 1 frame.
+    assert gltf["extensions"]["MMCP_motion"]["samples"][0]["num_frames"] == 1
+
+
+def test_capabilities_reports_supported_segments(client: TestClient) -> None:
+    body = client.get("/capabilities").json()
+    spec = body["models"][0]
+    assert "supported_segments" in spec
+    assert "text" in spec["supported_segments"]
+    assert "unconditioned" in spec["supported_segments"]
+    # NullBackbone doesn't advertise pose generation.
+    assert "pose" not in spec["supported_segments"]
+
+
 def test_unknown_joint_in_constraint(client: TestClient) -> None:
     req = _request_for(client)
     req["constraints"] = [{

@@ -14,6 +14,14 @@ UNITS = "meters"
 RESPONSE_FORMATS = ["gltf_2.0_json"]
 
 SUPPORTED_CONSTRAINTS = ["root_path", "effector_target", "pose_keyframe"]
+
+# The two segment types every conforming server supports. ``"pose"`` is an
+# optional extension — backbones that have a specialized text-to-pose model
+# include it in their ``ModelSpec.supported_segments``; backbones without
+# it leave this default and the SDK rejects ``pose`` segments before they
+# reach the backbone.
+SUPPORTED_SEGMENTS = ["text", "unconditioned"]
+
 SUPPORTED_GUIDANCE_TYPES = ["nocfg", "regular", "separated"]
 
 DEFAULT_LIMITS = {

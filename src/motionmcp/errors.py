@@ -21,6 +21,7 @@ STATUS_FOR: dict[str, int] = {
     "unknown_model":               400,
     "retargeting_unsupported":     400,
     "unsupported_constraint":      400,
+    "unsupported_segment":         400,
     "unknown_joint":               400,
     "invalid_skeleton":            400,
     "frame_out_of_range":          400,
@@ -87,6 +88,16 @@ def unsupported_constraint(
         "unsupported_constraint",
         f"constraint type {constraint_type!r} is not supported by this model",
         details={"supported_constraints": supported},
+    )
+
+
+def unsupported_segment(
+    segment_type: str, supported: list[str]
+) -> ProtocolError:
+    return ProtocolError(
+        "unsupported_segment",
+        f"segment type {segment_type!r} is not supported by this model",
+        details={"supported_segments": supported},
     )
 
 

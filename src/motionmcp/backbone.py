@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .protocol import (
     DEFAULT_LIMITS,
     SUPPORTED_GUIDANCE_TYPES,
+    SUPPORTED_SEGMENTS,
 )
 from .schemas import GenerateRequest, Skeleton
 
@@ -57,6 +58,13 @@ class ModelSpec(BaseModel):
     supports_async: bool = False
 
     supported_constraints: list[str] = Field(default_factory=list)
+    # Wire-format segment types this model accepts. Defaults to "text" and
+    # "unconditioned" (every conforming server supports those). Backbones
+    # with a specialized text-to-pose model add "pose"; the SDK rejects
+    # any segment whose type isn't listed here.
+    supported_segments: list[str] = Field(
+        default_factory=lambda: list(SUPPORTED_SEGMENTS)
+    )
     supported_guidance_types: list[str] = Field(
         default_factory=lambda: list(SUPPORTED_GUIDANCE_TYPES)
     )

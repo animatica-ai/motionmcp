@@ -26,6 +26,7 @@ request body. Response is a `Capabilities` object.
       "supports_retargeting": false,
       "supports_async": false,
       "supported_constraints": ["root_path", "effector_target", "pose_keyframe"],
+      "supported_segments": ["text", "unconditioned"],
       "supported_guidance_types": ["nocfg", "regular", "separated"],
       "predicted_contact_joints": ["LeftHeel", "LeftToe", "RightHeel", "RightToe"],
       "native_clip_seconds": 10.0,
@@ -53,6 +54,7 @@ request body. Response is a `Capabilities` object.
 | `supports_retargeting` | bool | If `false`, requests MUST send `canonical_skeleton` verbatim |
 | `supports_async` | bool | If `true`, server may return `202 Accepted` for long generations (see [Async](./async)) |
 | `supported_constraints` | string[] | Constraint type names the model accepts |
+| `supported_segments` | string[] | Segment types the model accepts. Defaults to `["text", "unconditioned"]`; backbones with a specialized text-to-pose model add `"pose"` |
 | `supported_guidance_types` | string[] | Subset of `["nocfg", "regular", "separated"]` |
 | `predicted_contact_joints` | string[] | Joint names (from `canonical_skeleton`) for which the model emits `foot_contacts`. Empty means no contact prediction |
 | `native_clip_seconds` | number | Duration the model was trained on. Requests beyond this are stitched per `chunking` |

@@ -28,6 +28,7 @@ from .protocol import (
     PROTOCOL_VERSION,
     SUPPORTED_CONSTRAINTS,
     SUPPORTED_GUIDANCE_TYPES,
+    SUPPORTED_SEGMENTS,
     DEFAULT_LIMITS,
 )
 from .schemas import (
@@ -38,6 +39,7 @@ from .schemas import (
     Joint,
     Options,
     PoseKeyframeConstraint,
+    PoseSegment,
     RootPathConstraint,
     Segment,
     Skeleton,
@@ -60,10 +62,12 @@ __all__ = [
     "Options",
     "PROTOCOL_VERSION",
     "PoseKeyframeConstraint",
+    "PoseSegment",
     "ProtocolError",
     "RootPathConstraint",
     "SUPPORTED_CONSTRAINTS",
     "SUPPORTED_GUIDANCE_TYPES",
+    "SUPPORTED_SEGMENTS",
     "Segment",
     "Skeleton",
     "TextSegment",

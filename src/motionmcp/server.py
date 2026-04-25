@@ -28,6 +28,7 @@ from .errors import (
     unknown_joint,
     unknown_model,
     unsupported_constraint,
+    unsupported_segment,
     version_unsupported,
 )
 from .gltf import build_gltf
@@ -254,6 +255,14 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
         if canonical_names != sent_names:
             raise retargeting_unsupported()
 
+    # Segment type support. Reject before any further work — for many
+    # backbones a request with a "pose" segment routes through an entirely
+    # different code path; validating the type up front lets the SDK send
+    # a clean error envelope without the backbone having to handle it.
+    for s in req.segments:
+        if s.type not in spec.supported_segments:
+            raise unsupported_segment(s.type, list(spec.supported_segments))
+
     # Constraint type support.
     skeleton_joint_names = {j.name for j in req.skeleton.joints}
     total_frames = req.total_frames
@@ -293,9 +302,9 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
                 f"max_num_samples {spec.limits.max_num_samples}",
             )
 
-    # Prompt length limit.
+    # Prompt length limit. Both text and pose segments carry prompts.
     for s in req.segments:
-        if s.type == "text":
+        if s.type in ("text", "pose"):
             if len(s.prompt) > spec.limits.max_prompt_length:
                 raise ProtocolError(
                     "invalid_options",
