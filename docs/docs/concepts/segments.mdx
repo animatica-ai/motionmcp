@@ -1,22 +1,31 @@
 ---
 id: segments
 title: Segments
-description: How to compose a motion request from text and unconditioned spans.
+description: How to compose a motion request from text, unconditioned, and pose spans.
 sidebar_position: 2
 ---
 
 # Segments
 
-A `Segment` describes one stretch of motion in time. Segments compose
-sequentially — the request's total length is `sum(segments[].duration_frames)`.
+A `Segment` describes one stretch of motion in time. Sequential segments
+compose into a clip — the request's total length is
+`sum(segments[].duration_frames)`. A single [`pose`](#posesegment--type-pose)
+segment is the one exception: it produces exactly one frame and can't be
+composed with others.
 
 Three segment types are defined in v1:
 
 ```json
+// Multi-segment clip
 [
   { "type": "text",          "prompt": "a person walks forward", "duration_frames": 90 },
   { "type": "unconditioned", "duration_frames": 30 },
   { "type": "text",          "prompt": "then sits down",         "duration_frames": 60 }
+]
+
+// Single-pose request (mutually exclusive with multi-segment composition)
+[
+  { "type": "pose", "prompt": "person waves hello with their right hand" }
 ]
 ```
 
