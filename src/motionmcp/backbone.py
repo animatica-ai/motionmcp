@@ -56,6 +56,10 @@ class ModelSpec(BaseModel):
 
     supports_retargeting: bool = False
     supports_async: bool = False
+    # True when the backbone honours a per-segment ``seed`` (see
+    # ``TextSegment.seed``). Clients should only attach per-segment seeds when
+    # this is advertised — older servers reject unknown fields (extra=forbid).
+    supports_segment_seed: bool = False
 
     supported_constraints: list[str] = Field(default_factory=list)
     # Wire-format segment types this model accepts. Defaults to "text" and

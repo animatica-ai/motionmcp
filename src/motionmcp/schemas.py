@@ -65,12 +65,20 @@ class TextSegment(BaseModel):
     prompt: str = Field(..., min_length=1)
     duration_frames: int = Field(..., gt=0)
     language: str | None = "en"
+    # Per-segment random seed. Overrides the request-level ``Options.seed``
+    # for this segment only; ``None`` falls back to ``Options.seed`` (and a
+    # ``None`` there means a non-deterministic draw). Lets a multi-segment
+    # request re-roll one segment independently without disturbing the seeds
+    # of the others.
+    seed: int | None = None
 
 
 class UnconditionedSegment(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["unconditioned"]
     duration_frames: int = Field(..., gt=0)
+    # See ``TextSegment.seed`` — same per-segment override semantics.
+    seed: int | None = None
 
 
 class PoseSegment(BaseModel):
