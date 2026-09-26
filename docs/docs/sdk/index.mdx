@@ -1,7 +1,7 @@
 ---
 id: index
 title: Python SDK
-description: motionmcp — the Python SDK for building an MMCP server.
+description: motionmcp — the Python SDK for building an MMCP server, and a client for talking to one.
 sidebar_label: Overview
 slug: /sdk/
 ---
@@ -15,6 +15,8 @@ about thirty lines.
 ```bash
 pip install motionmcp-sdk
 ```
+
+That installs the client, `motionmcp.client`; the server needs `pip install "motionmcp-sdk[server]"`.
 
 The SDK handles wire format, validation, glTF encoding, and the standard
 error envelope. You implement model loading and a single `generate()`

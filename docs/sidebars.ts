@@ -30,6 +30,7 @@ const sidebars: SidebarsConfig = {
         "sdk/errors",
         "sdk/serving",
         "sdk/null-backbone",
+        "sdk/client",
       ],
     },
   ],

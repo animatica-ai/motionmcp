@@ -1,0 +1,211 @@
+---
+id: client
+title: Client
+description: motionmcp.client — a Python client for talking to any MMCP server.
+sidebar_position: 8
+---
+
+# Client
+
+`motionmcp.client` is the other side of the wire: ask an MMCP server for
+a motion, read back the glTF it answers with. It works against any
+compliant server, not just ones built with this SDK.
+
+```python
+from motionmcp import client
+
+caps = client.get_capabilities("http://127.0.0.1:8000")   # cached per (url, access_token)
+model = client.pick_model(caps, wanted="kimodo-soma-rp")  # a model id from the capabilities
+segments = client.model_supported_segments(model)         # which segment types it accepts
+
+doc = client.generate("http://127.0.0.1:8000", request_body,
+                      access_token=None,                  # Bearer token, if the server wants one
+                      headers={"X-My-App": "1.0"},        # merged after the standard headers
+                      on_progress=print)                  # 202 + polling on the async path
+samples = client.parse_gltf_samples(doc)                  # one motion_data dict per sample
+```
+
+Three modules, on purpose small:
+
+| Module | What it does | Depends on |
+|---|---|---|
+| `motionmcp.client.http` | Speaks the protocol: capabilities, probing, generation. | Standard library |
+| `motionmcp.client.glb` | Unpacks a binary glTF (GLB) answer into a glTF JSON document. | Standard library |
+| `motionmcp.client.gltf_parser` | Turns the glTF 2.0 document into plain arrays. | numpy |
+
+Everything public is re-exported from `motionmcp.client`.
+
+## Install
+
+```bash
+pip install motionmcp-sdk
+```
+
+No extras. The base install is numpy plus the client — the server stack
+(pydantic, FastAPI, uvicorn) lives behind `[server]`, see
+**[Install →](./install)**.
+
+The HTTP layer uses `urllib` from the standard library — no `requests`,
+no `httpx`. The client is built to run inside interpreters embedded in
+DCC applications (Blender, Maya, Houdini, …), whose site-packages you
+don't own and which rarely ship either library.
+
+## Capabilities & model choice
+
+```python
+from motionmcp import client
+
+caps = client.get_capabilities(url, access_token=token)
+```
+
+- **`get_capabilities(server_url, timeout=10.0, use_cache=True, access_token=None)`**
+  — `GET /capabilities`, parsed. Cached per `(server_url, access_token)`
+  for the life of the process, so a local server and a cloud one, or two
+  accounts against the same server, never collide. `use_cache=False`
+  bypasses the cache.
+- **`cached_capabilities(server_url, access_token=None)`** — the cached
+  response, or `None`. Never touches the network, so a UI can consult it
+  on a repaint without blocking.
+- **`clear_capabilities_cache()`** — forget every cached response. Call
+  it after the user changes the server URL or restarts the server.
+- **`pick_model(caps, wanted=None)`** — the `models[]` entry whose `id`
+  matches `wanted` (case-insensitive), or the first entry when `wanted`
+  is empty or unknown. The same setting travels between servers, so an
+  unknown name falls back instead of failing. Returns `None` only when
+  the server lists no models.
+- **`model_supported_segments(model_info)`** — one model's advertised
+  `supported_segments`, lower-cased and de-duplicated; `[]` when absent.
+  Use it to decide whether to send a `pose` segment or fall back to
+  `text`. See **[Segments →](../concepts/segments)**.
+- **`probe_server(server_url, *, timeout=5.0, access_token=None)`** —
+  a liveness check that never raises. Always bypasses the cache and
+  returns a `ProbeResult`:
+
+  | Field | Type | Meaning |
+  |---|---|---|
+  | `ok` | `bool` | `True` only when `status == "online"` |
+  | `status` | `str` | `"online"`, `"unreachable"`, `"auth_required"`, `"http_error"` or `"bad_response"` |
+  | `message` | `str` | Human-readable summary |
+  | `capabilities` | `dict \| None` | The parsed capabilities when online |
+
+- **`retarget_state(server_url, timeout=5.0, access_token=None)`** —
+  `"ready"`, `"unavailable"` or `"unknown"`, read from `GET /health`.
+  `"unknown"` means *send the request and let the server answer* — never
+  a reason to refuse.
+
+```python
+result = client.probe_server(url, access_token=token)
+if result.status == "auth_required":
+    ...  # ask the user for a token
+elif result.ok:
+    model = client.pick_model(result.capabilities, wanted=settings.model)
+```
+
+## Generate
+
+```python
+doc = client.generate(server_url, request_body,
+                      timeout=600.0, access_token=None,
+                      on_progress=None, headers=None)
+```
+
+`request_body` is a plain dict in the
+**[GenerateRequest](../reference/generate-request)** shape; `generate()`
+POSTs it to `/generate` and returns the glTF 2.0 document as a dict.
+
+- **Sync and async.** A `200 OK` is returned directly. A `202 Accepted`
+  is followed to its `Location` and polled, honouring `Retry-After`,
+  until the job finishes or `timeout` runs out. See
+  **[Async jobs →](../reference/async)**.
+- **`on_progress`** — called with a status string (elapsed seconds) on
+  each poll cycle, for surfacing progress in a UI.
+- **`access_token`** — sent as `Authorization: Bearer …` on every
+  request, including polling.
+- **`headers`** — extra request headers, merged in after the standard
+  ones. This is how an embedding application identifies itself. They
+  ride on the request that *starts* a generation and on nothing else —
+  not on `/capabilities`, `/health` or job polling. `Authorization`
+  derived from `access_token` wins over a same-named entry here.
+- **Binary glTF.** A server may answer with `model/gltf-binary` (GLB)
+  instead of JSON, on the synchronous answer or after polling. The
+  client unpacks it with `glb_to_gltf` into the same glTF JSON document
+  the JSON path returns, so callers never branch on the content type.
+
+`glb_to_gltf(data)` is public too, for GLB bytes you got some other way:
+
+```python
+from motionmcp.client import glb_to_gltf
+
+doc = glb_to_gltf(open("motion.glb", "rb").read())
+```
+
+See **[Response →](../reference/response)** for the document itself.
+
+## Errors
+
+Every transport or server-side failure raises `MmcpError` (a
+`RuntimeError`). `probe_server` is the only call that never raises.
+
+```python
+from motionmcp.client import MmcpError
+
+try:
+    doc = client.generate(url, request_body, access_token=token)
+except MmcpError as exc:
+    print(exc.code, exc.details.get("status"), exc.details.get("request_id"))
+```
+
+- **`code`** — the server's `error.code` when its answer carries the
+  MMCP error envelope (e.g. `"retargeting_unsupported"`); otherwise a
+  client-side code: `"connection_failed"`, `"http_error"`,
+  `"bad_response"`, `"timeout"` or `"transport"`. HTTP 401 is always
+  `"auth_required"`, whatever the envelope says.
+- **`details`** — the envelope's own `details`, plus, on an HTTP
+  failure:
+
+  | Key | From |
+  |---|---|
+  | `status` | The HTTP status (unless the server already named one) |
+  | `retry_after` | The `Retry-After` header, in seconds, when numeric |
+  | `request_id` | `X-Request-ID`, or `X-Job-Id` if that is absent |
+
+See **[Errors reference →](../reference/errors)** for the codes a server
+can send.
+
+## Parsing
+
+```python
+from motionmcp.client import parse_gltf, parse_gltf_samples, xyzw_to_rotmat
+```
+
+- **`parse_gltf(doc)`** — the first sample as a `motion_data` dict.
+- **`parse_gltf_samples(doc)`** — one `motion_data` dict per
+  `animations[]` entry, i.e. per sample when `num_samples > 1`. Raises
+  `ValueError` if the document has no animations.
+- **`xyzw_to_rotmat(xyzw)`** — `[N, 4]` XYZW quaternions to `[N, 3, 3]`
+  rotation matrices.
+
+Each `motion_data` dict holds:
+
+| Key | Shape / type | |
+|---|---|---|
+| `local_rot_mats` | `ndarray [T, J, 3, 3]` | Local joint rotations |
+| `posed_joints` | `ndarray [T, J, 3]` | World positions, meters |
+| `fps` | `float` | |
+| `num_frames` | `int` | `T` |
+| `num_joints` | `int` | `J` |
+| `joint_names` | `list[str]` | In joint-index order |
+| `foot_contacts` | `ndarray [T, J]` bool | From `MMCP_motion`; all-`False` for joints the server didn't report |
+| `hierarchy` | `list[(name, parent or None)]` | In `joint_names` order |
+| `rest_positions` | `dict[name → (x, y, z)]` | World-space rest, meters |
+
+Missing foot contacts degrade to all-`False` rather than raising — the
+motion matters more than the metadata.
+
+## Where to go next
+
+- **[Quickstart (client) →](../get-started/quickstart-client)** — the
+  same flow in raw HTTP.
+- **[Response →](../reference/response)** — the glTF document and the
+  `MMCP_motion` extension.
+- **[Errors reference →](../reference/errors)** — every error code.

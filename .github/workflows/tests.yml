@@ -1,0 +1,61 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Both ends of the supported range.
+        python-version: ['3.9', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '${{ matrix.python-version }}'
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest tests -q
+
+  client-only:
+    # Proof that the client does not pull in the server (fastapi et al.).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # Oldest supported: MotionBuilder 2023 (Python 3.9).
+          python-version: '3.9'
+      - run: pip install . pytest
+      - run: python -c "import motionmcp.client; import motionmcp; print(motionmcp.__version__)"
+      - run: python -m pytest tests -q --ignore=tests/test_smoke.py --ignore=tests/test_batch.py
+      - name: Server extras really are extras
+        run: |
+          python - <<'EOF'
+          import motionmcp
+
+          try:
+              motionmcp.Backbone
+          except ImportError as exc:
+              assert "motionmcp-sdk[server]" in str(exc), f"unexpected message: {exc}"
+          else:
+              raise AssertionError("motionmcp.Backbone should not be importable without [server]")
+
+          try:
+              import fastapi
+          except ModuleNotFoundError:
+              pass
+          else:
+              raise AssertionError("fastapi should not be installed without [server]")
+
+          print("server extras confirmed extra")
+          EOF
