@@ -53,6 +53,9 @@ request body. Response is a `Capabilities` object.
 | `fps` | number | Native frame rate of the model |
 | `supports_retargeting` | bool | If `false`, requests MUST send `canonical_skeleton` verbatim |
 | `supports_async` | bool | If `true`, server may return `202 Accepted` for long generations (see [Async](./async)) |
+| `supports_segment_seed` | bool | If `true`, the model honours a per-segment `seed` |
+| `supports_loop` | bool | If `true`, the model samples `Options.loop` as a seamless cycle (one segment) |
+| `supports_batch` | bool | If `true`, `POST /generate` takes a batch body of up to `limits.max_batch_size` requests (see [Endpoints](./endpoints#batches)) |
 | `supported_constraints` | string[] | Constraint type names the model accepts |
 | `supported_segments` | string[] | Segment types the model accepts. Defaults to `["text", "unconditioned"]`; backbones with a specialized text-to-pose model add `"pose"` |
 | `supported_guidance_types` | string[] | Subset of `["nocfg", "regular", "separated"]` |
@@ -72,6 +75,7 @@ request body. Response is a `Capabilities` object.
 | `max_constraints_per_request` | int | Sum across all constraints in the request |
 | `max_prompt_length` | int | Codepoints, per `TextSegment.prompt` |
 | `max_request_bytes` | int | Body size limit. Exceeding returns `413 payload_too_large` |
+| `max_batch_size` | int | Most requests in one batch body |
 
 ## Using the canonical skeleton
 

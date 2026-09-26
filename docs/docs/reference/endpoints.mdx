@@ -15,6 +15,38 @@ sidebar_position: 1
 
 That's the entire surface.
 
+## Batches
+
+`POST /generate` also takes several requests at once — several characters,
+each with its own skeleton, segments, constraints and options (including
+`num_samples` for variations of one character):
+
+```json
+{
+  "protocol_version": "1.0",
+  "requests": [
+    { "model": "kimodo-soma-rp", "skeleton": { ... }, "segments": [ ... ] },
+    { "model": "kimodo-soma-rp", "skeleton": { ... }, "segments": [ ... ],
+      "options": { "num_samples": 4 } }
+  ]
+}
+```
+
+Each item is a full generate request; it MAY leave out `protocol_version`,
+which it then inherits from the batch. The response is `200 OK` with
+`Content-Type: application/json` and one result per request, in order:
+
+```json
+{ "results": [ { "gltf": { ... } }, { "error": { "code": "...", "message": "..." } } ] }
+```
+
+An item that fails gets its own error envelope and does not fail the
+others. The batch is refused whole only when it is not a batch at all: no
+`requests` list, more items than `limits.max_batch_size`, or a protocol
+major the server does not speak. Send batches only to models that
+advertise `supports_batch`. A single request (no `requests` key) is
+answered exactly as before, with a glTF body.
+
 ## Transport
 
 - Requests MUST set `Content-Type: application/json; charset=utf-8`.

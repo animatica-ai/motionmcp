@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from .backbone import Backbone, MotionResult, is_async_generate
+from .backbone import Backbone, ModelSpec, MotionResult, is_async_generate
 from .errors import (
     ProtocolError,
     frame_out_of_range,
@@ -34,6 +34,7 @@ from .errors import (
 from .gltf import build_gltf
 from .protocol import (
     COORDINATE_SYSTEM,
+    DEFAULT_LIMITS,
     PROTOCOL_MAJOR,
     PROTOCOL_VERSION,
     RESPONSE_FORMATS,
@@ -135,23 +136,17 @@ def build_app(
             "coordinate_system": COORDINATE_SYSTEM,
             "units":             UNITS,
             "response_formats":  RESPONSE_FORMATS,
-            "models":            [b.capabilities().model_dump(mode="json")
+            # Every model served here takes a batch body at POST /generate:
+            # the SDK runs one item by item when the backbone cannot batch.
+            "models":            [b.capabilities().model_copy(update={"supports_batch": True})
+                                  .model_dump(mode="json")
                                   for b in registry.values()],
         }
 
     # ----- /generate ---------------------------------------------------------
 
-    @app.post("/generate")
-    async def post_generate(request: Request) -> Response:
-        body = await request.body()
-        try:
-            payload = await request.json()
-        except Exception as exc:
-            raise ProtocolError(
-                "schema_validation",
-                f"request body is not valid JSON: {exc}",
-            )
-
+    def _parse(payload) -> GenerateRequest:
+        """One generate request, schema- and version-checked."""
         try:
             req = GenerateRequest.model_validate(payload)
         except ValidationError as exc:
@@ -160,51 +155,34 @@ def build_app(
                 "request fails schema validation",
                 details={"errors": exc.errors(include_url=False)},
             ) from exc
+        _check_version(req.protocol_version)
+        return req
 
-        # Protocol version check.
-        try:
-            major = int(req.protocol_version.split(".", 1)[0])
-        except ValueError as exc:
-            raise version_unsupported(
-                req.protocol_version, [str(PROTOCOL_MAJOR)]
-            ) from exc
-        if major != PROTOCOL_MAJOR:
-            raise version_unsupported(
-                req.protocol_version, [str(PROTOCOL_MAJOR)]
-            )
-
-        # Backbone lookup.
+    def _backbone_for(req: GenerateRequest) -> tuple[Backbone, ModelSpec]:
+        """The backbone a request names, with the request checked against it."""
         if req.model not in registry:
             raise unknown_model(req.model, sorted(registry.keys()))
         backbone = registry[req.model]
         spec = backbone.capabilities()
-
         # Per-model semantic validation that the SDK can do generically.
         _validate_against_spec(req, spec)
+        return backbone, spec
 
-        # Run generation. Support both sync and async generate().
-        result_or_coro = backbone.generate(req)
-        if is_async_generate(backbone) or inspect.isawaitable(result_or_coro):
-            result: MotionResult = await result_or_coro  # type: ignore[assignment]
-        else:
-            result = result_or_coro  # type: ignore[assignment]
-
+    def _encode(req: GenerateRequest, spec: ModelSpec, result) -> dict:
+        """A backbone's MotionResult as the glTF the protocol answers with."""
         if not isinstance(result, MotionResult):
             raise ProtocolError(
                 "internal_error",
                 "backbone.generate must return a MotionResult; "
                 f"got {type(result).__name__}",
             )
-
-        # Encode to glTF.
         skeleton_dict = req.skeleton.model_dump(mode="json")
         joint_names = (
             list(result.joint_names)
             if result.joint_names is not None
             else [j["name"] for j in skeleton_dict["joints"]]
         )
-
-        gltf = build_gltf(
+        return build_gltf(
             skeleton=skeleton_dict,
             joint_names=joint_names,
             rotations_quat=result.rotations,
@@ -216,10 +194,85 @@ def build_app(
             canonical_to_request=result.canonical_to_request,
         )
 
+    @app.post("/generate")
+    async def post_generate(request: Request) -> Response:
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            raise ProtocolError(
+                "schema_validation",
+                f"request body is not valid JSON: {exc}",
+            )
+
+        # A batch: several generate requests in one body (see _generate_batch).
+        if isinstance(payload, dict) and "requests" in payload:
+            return JSONResponse(content=await _generate_batch(payload),
+                                media_type="application/json")
+
+        req = _parse(payload)
+        backbone, spec = _backbone_for(req)
+        result = await _call_generate(backbone, req)
         return JSONResponse(
-            content=gltf,
+            content=_encode(req, spec, result),
             media_type="model/gltf+json",
         )
+
+    async def _generate_batch(payload: dict) -> dict:
+        """Several generate requests in one body, one result each, in order.
+
+        ``{"protocol_version": "1.0", "requests": [<generate request>, ...]}``
+        answers ``{"results": [{"gltf": {...}} | {"error": {...}}, ...]}``. An
+        item that fails — malformed, an unknown model, a failed generation —
+        gets its own error envelope and does not fail the others; only a batch
+        that is not a batch at all (no list, too many items, a protocol major
+        the server does not speak) is refused whole. An item may leave out
+        ``protocol_version``; it inherits the batch's.
+
+        Items are grouped by model and each group is handed to that backbone's
+        ``generate_batch`` when it has one (one pass over several characters),
+        or run item by item through ``generate``.
+        """
+        version = payload.get("protocol_version")
+        if not isinstance(version, str):
+            raise ProtocolError("schema_validation", "a batch needs a protocol_version")
+        _check_version(version)
+        items = payload.get("requests")
+        if not isinstance(items, list) or not items:
+            raise ProtocolError("schema_validation", "requests must be a non-empty list")
+        limit = min((b.capabilities().limits.max_batch_size for b in registry.values()),
+                    default=int(DEFAULT_LIMITS["max_batch_size"]))
+        if len(items) > limit:
+            raise ProtocolError(
+                "invalid_options",
+                f"a batch holds at most {limit} requests; got {len(items)}",
+                details={"max_batch_size": limit, "requests": len(items)},
+            )
+
+        results: list[dict | None] = [None] * len(items)
+        groups: dict[str, list[tuple[int, GenerateRequest, ModelSpec]]] = {}
+        for i, raw in enumerate(items):
+            try:
+                if not isinstance(raw, dict):
+                    raise ProtocolError("schema_validation", "each request must be an object")
+                req = _parse({"protocol_version": version, **raw})
+                _, spec = _backbone_for(req)
+            except ProtocolError as exc:
+                results[i] = exc.to_envelope()
+                continue
+            groups.setdefault(req.model, []).append((i, req, spec))
+
+        for model_id, group in groups.items():
+            outcomes = await _call_generate_batch(registry[model_id], [r for _, r, _ in group])
+            for (i, req, spec), outcome in zip(group, outcomes):
+                try:
+                    if isinstance(outcome, BaseException):
+                        raise outcome
+                    results[i] = {"gltf": _encode(req, spec, outcome)}
+                except ProtocolError as exc:
+                    results[i] = exc.to_envelope()
+                except Exception as exc:  # noqa: BLE001 — one item's failure
+                    results[i] = ProtocolError("internal_error", f"{type(exc).__name__}: {exc}").to_envelope()
+        return {"results": results}
 
     # ----- error envelope ---------------------------------------------------
 
@@ -240,6 +293,58 @@ def build_app(
 
 
 # ---- Generic per-spec validation ------------------------------------------
+
+def _check_version(version: str) -> None:
+    try:
+        major = int(version.split(".", 1)[0])
+    except ValueError as exc:
+        raise version_unsupported(version, [str(PROTOCOL_MAJOR)]) from exc
+    if major != PROTOCOL_MAJOR:
+        raise version_unsupported(version, [str(PROTOCOL_MAJOR)])
+
+
+async def _call_generate(backbone: Backbone, req: GenerateRequest):
+    """Run generate(), sync or async."""
+    result = backbone.generate(req)
+    if is_async_generate(backbone) or inspect.isawaitable(result):
+        result = await result
+    return result
+
+
+async def _call_generate_batch(backbone: Backbone, reqs: list[GenerateRequest]) -> list:
+    """One outcome per request: a MotionResult or the exception it raised.
+
+    The backbone's own ``generate_batch`` when it has one, else ``generate``
+    on each request in turn.
+    """
+    if type(backbone).generate_batch is not Backbone.generate_batch:
+        out = backbone.generate_batch(reqs)
+        if inspect.isawaitable(out):
+            out = await out
+        out = list(out)
+        # An item may itself be awaitable (a backbone that fans out to its own
+        # async generate); resolve each, keeping a failure to its item.
+        for i, item in enumerate(out):
+            if inspect.isawaitable(item):
+                try:
+                    out[i] = await item
+                except Exception as exc:  # noqa: BLE001 — recorded per item
+                    out[i] = exc
+        if len(out) != len(reqs):
+            err = ProtocolError(
+                "internal_error",
+                f"generate_batch returned {len(out)} results for {len(reqs)} requests",
+            )
+            return [err] * len(reqs)
+        return out
+    outcomes: list = []
+    for req in reqs:
+        try:
+            outcomes.append(await _call_generate(backbone, req))
+        except Exception as exc:  # noqa: BLE001 — recorded per item
+            outcomes.append(exc)
+    return outcomes
+
 
 def _validate_against_spec(req: GenerateRequest, spec) -> None:
     """Run generic checks the SDK can do without consulting the backbone.

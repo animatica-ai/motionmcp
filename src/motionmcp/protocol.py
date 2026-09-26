@@ -30,4 +30,6 @@ DEFAULT_LIMITS = {
     "max_constraints_per_request":  64,
     "max_prompt_length":            1000,
     "max_request_bytes":            1_048_576,
+    # Items in one batch body sent to POST /generate (see server.py).
+    "max_batch_size":               16,
 }

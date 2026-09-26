@@ -122,6 +122,24 @@ Anything that isn't a `ProtocolError` becomes `500 internal_error`.
 
 See **[Errors →](./errors)** for the full list.
 
+## `generate_batch(requests)`
+
+Optional. The SDK serves batch bodies for every backbone (and advertises
+`supports_batch`); without this method it runs `generate()` on each item in
+turn. Override it when the model can do better — one GPU pass over several
+characters:
+
+```python
+class MyBackbone(Backbone):
+    def generate_batch(self, requests):
+        # one entry per request, in order: a MotionResult, or the exception
+        # that item raised (a ProtocolError gives a clean error envelope)
+        return [self.generate(r) for r in requests]
+```
+
+Items arrive already validated, grouped by model. Sync or async, like
+`generate()`.
+
 ## `setup()` and `teardown()`
 
 Optional hooks called once at server startup and shutdown. Use them for

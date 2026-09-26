@@ -39,6 +39,7 @@ class Limits(BaseModel):
     max_constraints_per_request: int = int(DEFAULT_LIMITS["max_constraints_per_request"])
     max_prompt_length: int = int(DEFAULT_LIMITS["max_prompt_length"])
     max_request_bytes: int = int(DEFAULT_LIMITS["max_request_bytes"])
+    max_batch_size: int = int(DEFAULT_LIMITS["max_batch_size"])
 
 
 class ModelSpec(BaseModel):
@@ -64,6 +65,11 @@ class ModelSpec(BaseModel):
     # should only set ``loop`` when this is advertised; the SDK rejects it
     # otherwise.
     supports_loop: bool = False
+    # True when POST /generate accepts a batch body, ``{"requests": [...]}``,
+    # of up to ``limits.max_batch_size`` generate requests. Advertised by the
+    # SDK server for every model it serves (it can always run a batch item by
+    # item); a backbone that batches on the GPU overrides ``generate_batch``.
+    supports_batch: bool = False
 
     supported_constraints: list[str] = Field(default_factory=list)
     # Wire-format segment types this model accepts. Defaults to "text" and
@@ -179,6 +185,21 @@ class Backbone(abc.ABC):
 
         May be implemented as either ``def`` or ``async def``.
         """
+
+    def generate_batch(
+        self, requests: list[GenerateRequest],
+    ) -> list[MotionResult | BaseException] | Awaitable[list[MotionResult | BaseException]]:
+        """Optional: run several validated requests at once.
+
+        Return one entry per request, in order: a :class:`MotionResult`, or
+        the exception that item raised (a :class:`ProtocolError` for a clean
+        envelope). Override it when the model can batch — one GPU pass over
+        several characters instead of several passes. Not overriding it is
+        fine: the SDK then runs :meth:`generate` on each item in turn.
+
+        May be implemented as either ``def`` or ``async def``.
+        """
+        raise NotImplementedError
 
     # Optional hook: called once at server startup. Use it to load model
     # weights, allocate GPU buffers, warm caches.
