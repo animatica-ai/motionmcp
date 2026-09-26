@@ -200,6 +200,11 @@ class Options(BaseModel):
     post_processing: bool = True
     transition_frames: int = Field(5, ge=0, le=60)
     guidance: Guidance | None = None
+    # Sample the motion as a seamless cycle: the returned clip's last frame is
+    # its first again (same pose, height and heading; the root moved on by one
+    # cycle's travel), so repeating it has no seam. One segment only. Only send
+    # it to a model that advertises ``supports_loop``.
+    loop: bool = False
 
 
 # ---- Timing ---------------------------------------------------------------

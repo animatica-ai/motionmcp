@@ -263,6 +263,21 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
         if s.type not in spec.supported_segments:
             raise unsupported_segment(s.type, list(spec.supported_segments))
 
+    # Looping: only where the backbone says it can, and over one segment.
+    if req.options is not None and req.options.loop:
+        if not getattr(spec, "supports_loop", False):
+            raise ProtocolError(
+                "invalid_options",
+                "this model does not support options.loop",
+                details={"model": spec.id},
+            )
+        if len(req.segments) != 1:
+            raise ProtocolError(
+                "invalid_options",
+                "options.loop needs exactly one segment",
+                details={"segments": len(req.segments)},
+            )
+
     # Constraint type support.
     skeleton_joint_names = {j.name for j in req.skeleton.joints}
     total_frames = req.total_frames

@@ -60,6 +60,10 @@ class ModelSpec(BaseModel):
     # ``TextSegment.seed``). Clients should only attach per-segment seeds when
     # this is advertised — older servers reject unknown fields (extra=forbid).
     supports_segment_seed: bool = False
+    # True when the backbone samples ``options.loop`` as a cycle. Clients
+    # should only set ``loop`` when this is advertised; the SDK rejects it
+    # otherwise.
+    supports_loop: bool = False
 
     supported_constraints: list[str] = Field(default_factory=list)
     # Wire-format segment types this model accepts. Defaults to "text" and

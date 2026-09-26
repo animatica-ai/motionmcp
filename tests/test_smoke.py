@@ -226,3 +226,41 @@ def test_total_frames_property() -> None:
         ],
     )
     assert req.total_frames == 30
+
+
+class _LoopCapableNull(NullBackbone):
+    def capabilities(self):
+        spec = super().capabilities()
+        spec.supports_loop = True
+        return spec
+
+
+def _loop_request(c: TestClient, segments: int) -> dict:
+    canonical = c.get("/capabilities").json()["models"][0]["canonical_skeleton"]
+    return {
+        "protocol_version": "1.0",
+        "model": "null",
+        "skeleton": canonical,
+        "segments": [{"type": "text", "prompt": "walk", "duration_frames": 30}] * segments,
+        "options": {"loop": True},
+    }
+
+
+def test_loop_rejected_unless_advertised(client: TestClient) -> None:
+    r = client.post("/generate", json=_loop_request(client, 1))
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "invalid_options"
+
+
+def test_loop_accepted_when_advertised() -> None:
+    c = TestClient(build_app(_LoopCapableNull()))
+    assert c.get("/capabilities").json()["models"][0]["supports_loop"] is True
+    r = c.post("/generate", json=_loop_request(c, 1))
+    assert r.status_code == 200, r.text
+
+
+def test_loop_needs_one_segment() -> None:
+    c = TestClient(build_app(_LoopCapableNull()))
+    r = c.post("/generate", json=_loop_request(c, 2))
+    assert r.status_code == 400
+    assert "one segment" in r.json()["error"]["message"]
