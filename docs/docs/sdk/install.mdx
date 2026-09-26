@@ -8,19 +8,33 @@ sidebar_position: 2
 # Install
 
 ```bash
+# client / library only
 pip install motionmcp-sdk
+
+# server: Backbone, schemas, serve()
+pip install "motionmcp-sdk[server]"
 ```
 
 Requires **Python 3.10+**.
 
 ## What gets pulled in
 
+Base install (`motionmcp-sdk`):
+
+| Package | Why |
+|---|---|
+| `numpy >= 1.24` | Backbone IO arrays, glTF parsing in the client |
+
+With `[server]` (`motionmcp-sdk[server]`):
+
 | Package | Why |
 |---|---|
 | `pydantic >= 2.5` | Wire-format validation |
-| `numpy >= 1.24` | Backbone IO arrays |
 | `fastapi >= 0.110` | HTTP server |
 | `uvicorn[standard] >= 0.27` | ASGI runner used by `serve()` |
+
+Up to and including 0.5.0 the server stack was part of the base install;
+from 0.6.0 it is the `[server]` extra.
 
 That's the whole tree. There's no torch, no transformer library, no
 glTF dependency — the SDK encodes glTF itself.
@@ -30,16 +44,18 @@ glTF dependency — the SDK encodes glTF itself.
 For running the test suite or contributing:
 
 ```bash
-pip install "motionmcp[dev]"
+pip install "motionmcp-sdk[dev]"
 ```
 
-Adds `pytest`, `httpx` (for FastAPI's test client), and `ruff`.
+Everything in `[server]`, plus `pytest`, `httpx` (for FastAPI's test
+client), and `ruff`.
 
 ## Verify the install
 
 ```bash
 python -c "import motionmcp; print(motionmcp.__version__)"
-# 0.1.0
+# 0.6.0
+python -c "import motionmcp.client"
 ```
 
 Or boot the reference server and curl it:
@@ -58,7 +74,7 @@ A typical `pyproject.toml`:
 [project]
 name = "my-motion-server"
 dependencies = [
-    "motionmcp >= 0.1",
+    "motionmcp-sdk[server] >= 0.6",   # a server needs the [server] extra
     "torch",         # or whatever your model needs
     # ...
 ]

@@ -10,8 +10,29 @@ sidebar_position: 3
 Building a server in Python? See **[Quickstart (server) →](./quickstart)**.
 
 This walks through hitting an MMCP server with raw HTTP — no SDK
-required. Useful for plugin authors writing in non-Python languages, or
-for sanity-checking a server you're standing up.
+required — and if you are in Python, `motionmcp.client` does the three
+steps below for you. Useful for plugin authors writing in non-Python
+languages, or for sanity-checking a server you're standing up.
+
+## In Python
+
+```python
+from motionmcp import client
+
+url = "https://your-mmcp-server.example.com"
+caps = client.get_capabilities(url)
+model = client.pick_model(caps, wanted="kimodo-soma-rp")
+doc = client.generate(url, {
+    "protocol_version": "1.0",
+    "model": model["id"],
+    "skeleton": model["canonical_skeleton"],
+    "segments": [{"type": "text", "prompt": "a person walks forward, then waves hello",
+                  "duration_frames": 120}],
+})
+samples = client.parse_gltf_samples(doc)   # one motion_data dict per sample
+```
+
+See **[Client →](../sdk/client)** for the full API.
 
 ## 1 — Discover
 

@@ -55,8 +55,10 @@ for the full scope.
 | Client | Host | License | Status |
 |---|---|---|---|
 | **[Proscenium for Blender][proscenium]** | Blender 4.2+ | Apache 2.0 | Alpha |
+| **[motionmcp.client][client-sdk]** (Python) | Python 3.10+, any host | Apache 2.0 | Alpha |
 
 [proscenium]: https://github.com/animatica-ai/proscenium-blender
+[client-sdk]: ../sdk/client
 
 ### Proscenium
 
@@ -83,6 +85,14 @@ Configure the server URL:
 The plugin discovers the model via `/capabilities` and dispatches
 `/generate` against the configured URL. See the
 [Proscenium repo][proscenium] for the full README.
+
+### motionmcp.client
+
+A Python client library, shipped as part of the `motionmcp-sdk`
+package. Its HTTP layer uses only the standard library, so it runs
+inside interpreters embedded in DCC applications. Install it with
+`pip install motionmcp-sdk` — no extras needed. See
+**[Client →][client-sdk]** for the full API.
 
 ## Build your own
 
@@ -111,6 +121,7 @@ See **[SDK →](../sdk/)** for the full surface, and
 Two HTTP calls (`GET /capabilities`, `POST /generate`) and a glTF
 parser. See:
 
+- Writing Python? Use **[motionmcp.client →](../sdk/client)**.
 - **[Quickstart (client) →](./quickstart-client)** — raw HTTP / curl walkthrough.
 - **[Concepts →](../concepts/skeleton)** — the wire-format primitives
   (skeletons, segments, constraints, timing).

@@ -61,8 +61,15 @@ any glTF parser.
 ## Install
 
 ```bash
+# server: implement a Backbone and serve it
+pip install "motionmcp-sdk[server]"
+
+# client / library only: talk to an MMCP server
 pip install motionmcp-sdk
 ```
+
+Since 0.6.0 the server stack (FastAPI, pydantic, uvicorn) is the `[server]`
+extra; up to 0.5.0 it was part of the base install.
 
 Requires Python 3.10+.
 
@@ -111,6 +118,29 @@ pip install motionmcp-sdk
 python -m motionmcp.null_backbone
 # → MMCP server on :8000, returning rest pose for any request
 ```
+
+## Client side
+
+`motionmcp.client` is the other half of the SDK: a Python client for
+talking to any MMCP server, not just ones built with this package. It
+speaks HTTP with the standard library only (`urllib`), since the
+interpreters embedded in DCCs like Blender rarely have `requests` or
+`httpx` on hand. It also decodes the glTF 2.0 responses back into plain
+numpy arrays, so callers don't need a glTF library of their own. Install
+it with the base `pip install motionmcp-sdk` — no FastAPI/pydantic/uvicorn
+required.
+
+```python
+from motionmcp import client
+
+caps = client.get_capabilities(url)                      # GET /capabilities
+model = client.pick_model(caps, wanted="kimodo-soma-rp")  # a model id from the capabilities
+doc = client.generate(url, request_body, on_progress=print)  # POST /generate
+samples = client.parse_gltf_samples(doc)                  # glTF JSON -> numpy arrays
+```
+
+See **[Client](https://animatica.ai/mmcp/docs/sdk/client)** in the SDK docs
+for the full API.
 
 ## What's NOT in v0
 
