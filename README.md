@@ -71,7 +71,7 @@ pip install motionmcp-sdk
 Since 0.6.0 the server stack (FastAPI, pydantic, uvicorn) is the `[server]`
 extra; up to 0.5.0 it was part of the base install.
 
-Requires Python 3.10+.
+Requires Python 3.9+.
 
 ## What the SDK gives you
 
