@@ -20,9 +20,13 @@ Build a vendor-neutral motion-generation HTTP server in ~30 lines:
 
     if __name__ == "__main__":
         serve(MyBackbone())
+
+The HTTP client lives in ``motionmcp.client``. The server side (``Backbone``,
+the request schemas, ``serve``) needs ``pip install "motionmcp-sdk[server]"``.
 """
 
-from .backbone import Backbone, ModelSpec, MotionResult
+import importlib
+
 from .errors import ProtocolError
 from .protocol import (
     PROTOCOL_VERSION,
@@ -31,23 +35,30 @@ from .protocol import (
     SUPPORTED_SEGMENTS,
     DEFAULT_LIMITS,
 )
-from .schemas import (
-    Constraint,
-    EffectorTargetConstraint,
-    GenerateRequest,
-    Guidance,
-    Joint,
-    Options,
-    PoseKeyframeConstraint,
-    PoseSegment,
-    RootPathConstraint,
-    Segment,
-    Skeleton,
-    TextSegment,
-    Timing,
-    UnconditionedSegment,
-)
-from .server import build_app, serve
+
+# Server-side names need the [server] extras (pydantic, fastapi, uvicorn), so
+# they are imported on first access instead of with the package.
+_SERVER_EXPORTS: dict[str, str] = {
+    "Backbone": ".backbone",
+    "ModelSpec": ".backbone",
+    "MotionResult": ".backbone",
+    "Constraint": ".schemas",
+    "EffectorTargetConstraint": ".schemas",
+    "GenerateRequest": ".schemas",
+    "Guidance": ".schemas",
+    "Joint": ".schemas",
+    "Options": ".schemas",
+    "PoseKeyframeConstraint": ".schemas",
+    "PoseSegment": ".schemas",
+    "RootPathConstraint": ".schemas",
+    "Segment": ".schemas",
+    "Skeleton": ".schemas",
+    "TextSegment": ".schemas",
+    "Timing": ".schemas",
+    "UnconditionedSegment": ".schemas",
+    "build_app": ".server",
+    "serve": ".server",
+}
 
 __all__ = [
     "Backbone",
@@ -77,4 +88,23 @@ __all__ = [
     "serve",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.6.0"
+
+
+def __getattr__(name):
+    if name in _SERVER_EXPORTS:
+        try:
+            module = importlib.import_module(_SERVER_EXPORTS[name], __name__)
+        except ImportError as exc:
+            raise ImportError(
+                f"motionmcp.{name} needs the server extras (missing module {exc.name!r}): "
+                "pip install 'motionmcp-sdk[server]'"
+            ) from exc
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(set(globals()) | set(__all__))
