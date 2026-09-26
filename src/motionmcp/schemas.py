@@ -7,7 +7,7 @@ Keep them in sync with that source of truth.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -24,10 +24,10 @@ Quaternion = tuple[float, float, float, float]   # (x, y, z, w)
 class Joint(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(..., min_length=1, max_length=128)
-    parent: str | None = None
+    parent: Optional[str] = None
     rest_translation: Vec3
     rest_rotation: Quaternion
-    display_name: str | None = Field(None, max_length=256)
+    display_name: Optional[str] = Field(None, max_length=256)
 
 
 class Skeleton(BaseModel):
@@ -64,13 +64,13 @@ class TextSegment(BaseModel):
     type: Literal["text"]
     prompt: str = Field(..., min_length=1)
     duration_frames: int = Field(..., gt=0)
-    language: str | None = "en"
+    language: Optional[str] = "en"
     # Per-segment random seed. Overrides the request-level ``Options.seed``
     # for this segment only; ``None`` falls back to ``Options.seed`` (and a
     # ``None`` there means a non-deterministic draw). Lets a multi-segment
     # request re-roll one segment independently without disturbing the seeds
     # of the others.
-    seed: int | None = None
+    seed: Optional[int] = None
 
 
 class UnconditionedSegment(BaseModel):
@@ -78,7 +78,7 @@ class UnconditionedSegment(BaseModel):
     type: Literal["unconditioned"]
     duration_frames: int = Field(..., gt=0)
     # See ``TextSegment.seed`` — same per-segment override semantics.
-    seed: int | None = None
+    seed: Optional[int] = None
 
 
 class PoseSegment(BaseModel):
@@ -97,7 +97,7 @@ class PoseSegment(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["pose"]
     prompt: str = Field(..., min_length=1)
-    language: str | None = "en"
+    language: Optional[str] = "en"
 
     # Intrinsic frame count — used by GenerateRequest.total_frames so all
     # segment types share the same surface. Not present on the wire.
@@ -107,7 +107,7 @@ class PoseSegment(BaseModel):
 
 
 Segment = Annotated[
-    TextSegment | UnconditionedSegment | PoseSegment,
+    Union[TextSegment, UnconditionedSegment, PoseSegment],
     Field(discriminator="type"),
 ]
 
@@ -119,7 +119,7 @@ class RootPathConstraint(BaseModel):
     type: Literal["root_path"]
     frames: list[int] = Field(..., min_length=1)
     positions_xz: list[Vec2] = Field(..., min_length=1)
-    heading_radians: list[float] | None = None
+    heading_radians: Optional[list[float]] = None
 
     @model_validator(mode="after")
     def _check_lengths(self) -> "RootPathConstraint":
@@ -143,7 +143,7 @@ class EffectorTargetConstraint(BaseModel):
     joint: str
     frames: list[int] = Field(..., min_length=1)
     positions: list[Vec3] = Field(..., min_length=1)
-    rotations: list[Quaternion] | None = None
+    rotations: Optional[list[Quaternion]] = None
 
     @model_validator(mode="after")
     def _check_lengths(self) -> "EffectorTargetConstraint":
@@ -164,12 +164,12 @@ class PoseKeyframeConstraint(BaseModel):
     type: Literal["pose_keyframe"]
     frame: int = Field(..., ge=0)
     joint_rotations: dict[str, Quaternion] = Field(..., min_length=1)
-    root_position: Vec3 | None = None
+    root_position: Optional[Vec3] = None
     fill_mode: Literal["rest", "generate"] = "generate"
 
 
 Constraint = Annotated[
-    RootPathConstraint | EffectorTargetConstraint | PoseKeyframeConstraint,
+    Union[RootPathConstraint, EffectorTargetConstraint, PoseKeyframeConstraint],
     Field(discriminator="type"),
 ]
 
@@ -196,10 +196,10 @@ class Options(BaseModel):
     model_config = ConfigDict(extra="forbid")
     diffusion_steps: int = Field(100, ge=1, le=500)
     num_samples: int = Field(1, ge=1, le=16)
-    seed: int | None = None
+    seed: Optional[int] = None
     post_processing: bool = True
     transition_frames: int = Field(5, ge=0, le=60)
-    guidance: Guidance | None = None
+    guidance: Optional[Guidance] = None
     # Sample the motion as a seamless cycle: the returned clip's last frame is
     # its first again (same pose, height and heading; the root moved on by one
     # cycle's travel), so repeating it has no seam. One segment only. Only send
@@ -223,9 +223,9 @@ class GenerateRequest(BaseModel):
     skeleton: Skeleton
     segments: list[Segment] = Field(default_factory=list)
     constraints: list[Constraint] = Field(default_factory=list)
-    duration_frames: int | None = Field(None, gt=0)
-    timing: Timing | None = None
-    options: Options | None = None
+    duration_frames: Optional[int] = Field(None, gt=0)
+    timing: Optional[Timing] = None
+    options: Optional[Options] = None
 
     @model_validator(mode="after")
     def _cross_field(self) -> "GenerateRequest":
