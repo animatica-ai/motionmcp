@@ -88,7 +88,7 @@ __all__ = [
     "serve",
 ]
 
-__version__ = "0.7.2"
+__version__ = "0.8.0"
 
 
 def __getattr__(name):

@@ -288,6 +288,7 @@ class _Body:
     """A motion, read for its travel: the COM and what touches the floor (+Z up)."""
 
     def __init__(self, J, fps, loop):
+        self.J = J
         self.fps, self.loop = fps, loop
         self.com = _com(J)[:, :2]
         self.n = n = len(self.com)
@@ -309,6 +310,34 @@ class _Body:
                 if d[i] and not ((i > 0 and d[i - 1]) or (i + 1 < n and d[i + 1])):
                     dd[i] = False                                  # a 1-frame blip
             self.contacts.append((g, p, dd))
+
+    def facing(self):
+        """Which way the body faces, per frame (radians, + turns left, about +Z):
+        square to the line across its hips (the shoulders twist with the arms;
+        they are only read without hip joints). None without either."""
+        J = self.J
+        for left, right in (("l_leg", "r_leg"), ("l_arm", "r_arm")):
+            if left in J and right in J:
+                lat = J[right][0][:, :2] - J[left][0][:, :2]
+                break
+        else:
+            return None
+        if float(np.linalg.norm(lat, axis=1).min()) < 1e-6:
+            return None
+        return np.unwrap(np.arctan2(lat[:, 0], -lat[:, 1]))          # up x right
+
+    def touchdowns(self) -> dict:
+        """The frames each foot comes down on (sync markers for a game)."""
+        out = {}
+        for group, name in (("l foot", "LeftFootDown"), ("r foot", "RightFootDown")):
+            d = np.zeros(self.n, bool)
+            for g, _p, dd in self.contacts:
+                if g == group:
+                    d |= dd
+            out[name] = [i for i in range(1, self.n) if d[i] and not d[i - 1]]
+            if self.loop and self.n > 2 and d[0] and not d[-2]:
+                out[name].insert(0, 0)                  # a cycle that starts on it
+        return out
 
     def anchor(self):
         """Support centroid; in flight the COM, offset to join take-off and landing."""
@@ -417,9 +446,9 @@ class _Body:
                 j += 1
             runs.append((lab[i], i, j))
             i = j + 1
-        for kind, i, j in runs:
+        for kind, i, j in runs:                  # on a fixed base: hold still, over the support
             if kind == "base":
-                p[i:j + 1] = avg[i:j + 1].mean(0)
+                p[i:j + 1] = anc[i:j + 1].mean(0)
         for kind, i, j in runs:
             if kind == "move":
                 a = p[i - 1] - avg[i] if i > 0 and not np.isnan(p[i - 1, 0]) else np.zeros(2)
@@ -645,6 +674,47 @@ def _select(body: _Body):
     return best[:4]
 
 
+# --- the heading ----------------------------------------------------------------------
+
+#: The heading is where the body faces (square to its hips), not where its
+#: path goes: a strafe keeps facing forward, a backpedal does not spin round, a
+#: turn on the spot turns. A turn is what lasts: the facing is averaged over a
+#: stride (at least HEADING_WINDOW s), and what it ends up turned by counts,
+#: not how far it twists on the way (a landing twists the pelvis ~15 degrees
+#: and back). Fixed under YAW_STILL of it, a steady turn within YAW_TOL of
+#: one, else keyed like the distance curve, only ever turning one way. On the
+#: spot only a turn of TURN_ON_SPOT counts. A loop turns steadily, and closes.
+#: Same as the Blender addon's inplace.py.
+HEADING_WINDOW = 0.5
+YAW_STILL = math.radians(4.0)
+YAW_TOL_RMS, YAW_TOL_MAX = math.radians(2.0), math.radians(5.0)
+TURN_ON_SPOT = math.radians(15.0)
+
+
+def _heading(body: _Body, on_spot: bool):
+    """(heading change from 0, how it was fitted, the raw facing or None)."""
+    n = body.n
+    raw = body.facing() if n >= 3 else None
+    if raw is None:
+        return None, "path", None
+    _path, labels = body.travel_path()
+    T = np.arange(n) / body.fps
+    tk = _key_times(labels, T)
+    sm = _box(raw, np.maximum(body.window(), HEADING_WINDOW * body.fps), body.loop)
+    sm = sm - sm[0]
+    rate = float(np.dot(T, sm) / max(float(np.dot(T, T)), 1e-12))
+    steady = rate * T
+    if body.loop:
+        return steady, "steady", raw
+    if abs(float(sm[-1])) < (TURN_ON_SPOT if on_spot else YAW_STILL):
+        return np.zeros(n), "fixed", raw
+    e = np.abs(steady - sm)
+    if float(np.sqrt((e ** 2).mean())) <= YAW_TOL_RMS and float(e.max()) <= YAW_TOL_MAX:
+        return steady, "steady", raw
+    y = _pchip(tk, _monotone_keys(sm, T, tk), T)
+    return y - y[0], "keyed", raw
+
+
 def trajectory_from_points(J: Mapping[str, tuple], fps: float, loop: bool = False,
                            root_xy: np.ndarray | None = None, root_turn: float | None = None) -> dict | None:
     """The trajectory of one motion from per-role (head, tail) positions ``(T, 3)``
@@ -655,14 +725,21 @@ def trajectory_from_points(J: Mapping[str, tuple], fps: float, loop: bool = Fals
     if "hips" not in J:
         return None
     body = _Body(J, fps, loop)
-    xy, yaw, model, prm = _select(body)
+    xy, path_yaw, model, prm = _select(body)
+    yaw, how, raw = _heading(body, model == "still")
+    if yaw is None:                    # no hips or shoulders to read a facing from: the path's
+        yaw, how = path_yaw, "path"
     if loop and len(xy) > 1:
         u = np.linspace(0, 1, len(xy))
         if root_xy is not None:
             xy = xy + (np.asarray(root_xy, float) - (xy[-1] - xy[0]))[None] * u[:, None]
-        if model == "arc" and root_turn is not None:
-            yaw = yaw + (root_turn - yaw[-1]) * u
-    return {"model": model, "loop": bool(loop), "params": prm, "xy": xy, "yaw": yaw}
+        # a cycle closes facing the way it began, plus its turn (a line's few
+        # degrees of drift were a seam)
+        turn = float(raw[-1] - raw[0]) if raw is not None else root_turn
+        if turn is not None and (raw is not None or model == "arc"):
+            yaw = yaw + (turn - yaw[-1]) * u
+    return {"model": model, "loop": bool(loop), "params": prm, "heading": how,
+            "markers": body.touchdowns(), "xy": xy, "yaw": yaw}
 
 
 def compute_trajectories(*, skeleton: Mapping[str, Any], joint_names: Sequence[str],

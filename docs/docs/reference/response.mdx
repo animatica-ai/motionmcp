@@ -90,6 +90,8 @@ re-apply:
   "model": "line",
   "loop": true,
   "params": {"speed": 1.052, "heading_deg": 0.1, "off_cm": 0.9},
+  "heading": "fixed",
+  "markers": {"LeftFootDown": [0, 31], "RightFootDown": [15, 46]},
   "position": [[0.0, 0.021], [0.0, 0.056], ...],
   "yaw": [0.0, 0.0, ...]
 }
@@ -101,9 +103,13 @@ re-apply:
 | `loop` | bool | The request's `options.loop` |
 | `params` | object | The model's numbers: `speed` (m/s), `heading_deg`, `turn_deg_s`, `radius_m`, `key_times_s` + `distance_keys_m` (the distance curve), `control_points_xz`; `off_cm` is its RMS distance from the travel path |
 | `position` | `[x, z][]` | Per frame, on the ground plane, metres, in the response's frame |
-| `yaw` | number[] | Per frame, radians about +Y, 0 at frame 0: the trajectory's own turning (an arc's) |
+| `yaw` | number[] | Per frame, radians about +Y, 0 at frame 0: the heading, where the body faces (square to its hips, averaged over a stride), not where its path goes. A strafe keeps facing forward; a turn on the spot turns; a twist that comes back is not a turn. A loop's closes on its turn over the cycle |
+| `heading` | string | How `yaw` was fitted: `fixed`, `steady` (a constant turn rate), `keyed` (a curve that only turns one way), or `path` (no hips to read a facing from: the path's direction) |
+| `markers` | object | Foot sync markers: `LeftFootDown` / `RightFootDown`, the frames each foot comes down on |
 
 To play a sample in place, move frame *t* by the inverse of
 `T(position[t]) · Ry(yaw[t])`, then by `T(position[0])`: the root ends where it
 began, facing the way it began, and every other part of the motion is
-untouched.
+untouched. For root motion, put `T(position[t]) · Ry(yaw[t])` (relative to frame
+0) on a ground root bone and parent the hips to it: the same clip then plays
+with root motion, or in place by ignoring the root.
