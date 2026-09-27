@@ -70,7 +70,9 @@ response only animates joints that were sent in the request's
 | `samples[].name` | string | Matches the corresponding `animations[].name` |
 | `samples[].num_frames` | int | Frame count |
 | `samples[].chunk_boundaries` | int[] | Frame indices at which the server stitched internal chunks (relevant when the model declares `chunking: "stitched"`). Empty array when the request fit in one chunk |
-| `samples[].foot_contacts` | `{ joint_name: bool[] }` \| `{ "$accessor": int }` \| null | Per-frame contact state, keyed by joint names from the request's `skeleton.joints`. For long clips, MAY reference an `accessor` (uint8 booleans, length `num_frames × len(joints)`) via `{ "$accessor": <accessor_index> }`; the joint-name → channel-index mapping then lives in `samples[].foot_contact_joints: string[]` || `samples[].trajectory` | object \| null | The travel trajectory: the path the motion moves along, without the body's own sway, surge, height or twist (see [below](#the-travel-trajectory)). Sent by servers with `supports_trajectory: true`; null when the body could not be read |
+| `samples[].foot_contacts` | `{ joint_name: bool[] }` \| `{ "$accessor": int }` \| null | Per-frame contact state, keyed by joint names from the request's `skeleton.joints`. For long clips, MAY reference an `accessor` (uint8 booleans, length `num_frames × len(joints)`) via `{ "$accessor": <accessor_index> }`; the joint-name → channel-index mapping then lives in `samples[].foot_contact_joints: string[]` |
+| `samples[].trajectory` | object \| null | The travel trajectory: the path the motion moves along, without the body's own sway, surge, height or twist (see [below](#the-travel-trajectory)). Sent by servers with `supports_trajectory: true`; null when the body could not be read |
+| `samples[].reference` | `{ "fidelity": number }` \| absent | *1.2.* Present on every sample of a `motion_reference` response: the request's `fidelity`, so a client can label the variations |
 
 Clients that don't need the metadata can ignore the extension entirely
 and still get a valid glTF.

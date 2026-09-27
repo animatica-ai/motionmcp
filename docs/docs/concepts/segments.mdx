@@ -1,7 +1,7 @@
 ---
 id: segments
 title: Segments
-description: How to compose a motion request from text, unconditioned, and pose spans.
+description: How to compose a motion request from text, unconditioned, pose and motion-reference spans.
 sidebar_position: 2
 ---
 
@@ -11,9 +11,11 @@ A `Segment` describes one stretch of motion in time. Sequential segments
 compose into a clip — the request's total length is
 `sum(segments[].duration_frames)`. A single [`pose`](#posesegment--type-pose)
 segment is the one exception: it produces exactly one frame and can't be
-composed with others.
+composed with others. A [`motion_reference`](#motionreferencesegment--type-motion_reference)
+segment (1.2) also stands alone: it asks for new performances of a clip the
+client sends.
 
-Three segment types are defined in v1:
+Four segment types are defined in v1:
 
 ```json
 // Multi-segment clip
@@ -27,13 +29,20 @@ Three segment types are defined in v1:
 [
   { "type": "pose", "prompt": "person waves hello with their right hand" }
 ]
+
+// Variations of a reference clip (1.2; alone in the request)
+[
+  { "type": "motion_reference", "joint_names": ["Hips", "Spine1"],
+    "rotations": [[[0, 0, 0, 1], [0, 0, 0, 1]], [[0, 0, 0, 1], [0, 0.01, 0, 1]]],
+    "root_positions": [[0, 0.95, 0], [0, 0.95, 0.03]], "fps": 30 }
+]
 ```
 
 `Segment` is a **discriminated union** with `type` as the discriminator.
 Servers advertise which types they accept via
 `ModelSpec.supported_segments` in `/capabilities` — clients SHOULD
 check before sending a non-default type. Future minor versions MAY add
-types (e.g. `"audio"`, `"motion_reference"`) under the same key.
+types (e.g. `"audio"`) under the same key.
 
 ## TextSegment — `type: "text"`
 
@@ -96,6 +105,64 @@ rejects pose segments sent to a model that doesn't claim support, with
 the `unsupported_segment` error code. See
 **[Capabilities reference →](../reference/capabilities)**.
 
+## MotionReferenceSegment — `type: "motion_reference"`
+
+*Since 1.2.* Generates **new performances of the kind of motion in a
+reference clip** — "more like this". The client sends a clip sampled from
+its own rig (a take, hand keys, mocap); the server returns
+`options.num_samples` new motions of the same kind, `duration_frames` long,
+as the samples of one response. No prompt.
+
+```json
+{
+  "type": "motion_reference",
+  "duration_frames": 150,
+  "joint_names": ["Hips", "Spine1", "..."],
+  "rotations": [[[0, 0, 0, 1], "... one per joint"], "... one per frame"],
+  "root_positions": [[0, 0.95, 0], "... one per frame"],
+  "fps": 30,
+  "fidelity": 0.0
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `type` | `"motion_reference"` | yes | Discriminator |
+| `duration_frames` | int (≥ 1) | no, default = the reference length | Output length, in frames at the request's effective fps. At most `limits.max_reference_frames` |
+| `joint_names` | string[] (unique, ≥ 1) | yes | Joints of the request `skeleton`, named as in `pose_keyframe.joint_rotations` |
+| `rotations` | `[x, y, z, w][][]`, T × J | yes | Local-to-parent quaternions per frame, one per `joint_names` entry, in the same convention and order as `pose_keyframe.joint_rotations`. T ≥ 2, at most `limits.max_reference_frames` |
+| `root_positions` | `[x, y, z][]`, T | yes | The root joint's world position per frame, Y-up metres, as `pose_keyframe.root_position` |
+| `fps` | number (> 0) | yes | Frame rate of the reference samples |
+| `fidelity` | number in [0, 0.2] | no, default `0.0` | `0.0`: new performances of this kind of motion. A small positive value (e.g. `0.05`): this take, gently varied (the model starts from the reference, partly noised) |
+
+Rules:
+
+- At most **one** `motion_reference` segment per request, and **no other
+  segments** alongside it → `400 invalid_request`.
+- `len(rotations) == len(root_positions) == T`, every frame has one
+  quaternion per `joint_names` entry, and T ≥ 2 → otherwise
+  `422 schema_validation`. Quaternions are taken as sent (as for
+  `pose_keyframe`): not required to be exactly unit length.
+- Every `joint_names` entry must be a joint of the request `skeleton` →
+  `unknown_joint`.
+- `options.loop` is not supported with a reference → `400 invalid_request`.
+- `options.num_samples` is the number of variations (its usual cap);
+  `options.seed` works as for text.
+- `options.guidance`: when omitted, the server picks its default **for a
+  reference request** (which may differ from its text default); an explicit
+  guidance is honoured.
+- Constraints (`root_path`, `effector_target`, `pose_keyframe`) apply to the
+  generated samples as they do for text, over frames
+  `[0, duration_frames)`.
+- The response is the usual glTF, one animation per variation; each
+  `MMCP_motion.samples[]` entry carries `reference: {"fidelity": f}`.
+
+`MotionReferenceSegment` is an **optional** capability: a model lists
+`"motion_reference"` in `supported_segments` and SHOULD set
+`limits.max_reference_frames`. The SDK rejects the segment for a model that
+doesn't (`unsupported_segment`), and a reference, or a `duration_frames`,
+longer than `max_reference_frames` (`invalid_options`).
+
 ## Composing
 
 ```json
@@ -130,6 +197,7 @@ case you MUST set `duration_frames` at the request level:
 ```
 
 When `segments` is non-empty, the request-level `duration_frames` MUST be
-omitted — the duration is `sum(segments[].duration_frames)`.
+omitted — the duration is `sum(segments[].duration_frames)` (a
+`motion_reference` without `duration_frames` counts its reference length).
 
 A request with both `segments: []` and `constraints: []` is rejected.

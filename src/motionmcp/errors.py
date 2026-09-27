@@ -26,6 +26,9 @@ STATUS_FOR: dict[str, int] = {
     "invalid_skeleton":            400,
     "frame_out_of_range":          400,
     "invalid_options":             400,
+    # 1.2: a request whose parts are individually valid but can't go together
+    # (e.g. a motion_reference segment mixed with other segments).
+    "invalid_request":             400,
     "version_unsupported":         400,
     "unauthorized":                401,
     "forbidden":                   403,

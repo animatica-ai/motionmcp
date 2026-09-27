@@ -16,7 +16,7 @@ The body of `POST /generate`.
 | `protocol_version` | string matching `^\d+\.\d+$` | yes | Wire version. A v1.x server MUST accept any value matching `^1\.\d+$` and MAY refuse other majors with `version_unsupported` |
 | `model` | string | yes | One of `Capabilities.models[].id` |
 | `skeleton` | [`Skeleton`](../concepts/skeleton) | yes | The character's skeleton; must be sent every time |
-| `segments` | [`Segment[]`](../concepts/segments) | no, default `[]` | Discriminated union of `TextSegment` and `UnconditionedSegment`. At least one of `segments` or `constraints` must be non-empty |
+| `segments` | [`Segment[]`](../concepts/segments) | no, default `[]` | Discriminated union of `TextSegment`, `UnconditionedSegment`, `PoseSegment` and (1.2) `MotionReferenceSegment`; the last two stand alone. At least one of `segments` or `constraints` must be non-empty |
 | `constraints` | [`Constraint[]`](../concepts/constraints) | no, default `[]` | See constraint primitives |
 | `duration_frames` | int (> 0) | conditional | **Required** when `segments` is empty (constraints-only); **forbidden** when `segments` is non-empty |
 | `timing` | `{ "fps": number }` | no | If set, frames are interpreted in this fps and the response is resampled. See [Timing →](../concepts/timing) |
@@ -50,7 +50,7 @@ accepts any skeleton.
 | `seed` | int \| null | null | RNG seed for reproducibility. Fixes the RNG state before generation, making the full `(seed, num_samples)` tuple deterministic |
 | `post_processing` | bool | true | Foot-skate cleanup, root correction (backbone-specific) |
 | `transition_frames` | int (0–60) | 5 | Blend window between segments. Rotations blend via slerp; root translation blends linearly |
-| `guidance.type` | `"nocfg"` \| `"regular"` \| `"separated"` | backbone default | Classifier-free guidance mode |
+| `guidance.type` | `"nocfg"` \| `"regular"` \| `"separated"` | backbone default (may differ per segment type, e.g. for a `motion_reference`) | Classifier-free guidance mode |
 | `guidance.weight` | float[] | backbone default | Length 1 for `regular`, length 2 for `separated`, length 0 (or omitted) for `nocfg` |
 
 Backbones that don't implement an option MAY ignore it; they MUST NOT
@@ -125,3 +125,29 @@ request with a derived seed.
   ]
 }
 ```
+
+### Variations of a clip (1.2)
+
+Four new performances of a 2-second reference, 3 seconds long, to a model
+that lists `"motion_reference"` in `supported_segments`:
+
+```json
+{
+  "protocol_version": "1.2",
+  "model": "kimodo-soma-rp",
+  "skeleton": { "joints": [ /* … */ ] },
+  "segments": [{
+    "type": "motion_reference",
+    "duration_frames": 90,
+    "joint_names": ["Hips", "Spine1", "..."],
+    "rotations": [ /* 60 frames × one [x, y, z, w] per joint */ ],
+    "root_positions": [ /* 60 × [x, y, z] */ ],
+    "fps": 30,
+    "fidelity": 0.0
+  }],
+  "options": { "num_samples": 4 }
+}
+```
+
+See **[Segments →](../concepts/segments#motionreferencesegment--type-motion_reference)**
+for the rules.

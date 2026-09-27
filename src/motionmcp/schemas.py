@@ -106,10 +106,82 @@ class PoseSegment(BaseModel):
         return 1
 
 
+class MotionReferenceSegment(BaseModel):
+    """New performances of the kind of motion in a reference clip (MMCP 1.2).
+
+    The client sends a clip — sampled from its own rig — and the model returns
+    ``options.num_samples`` new motions of the same kind, ``duration_frames``
+    long. No prompt. ``fidelity`` picks how close they stay to the clip: 0.0
+    (default) is "this kind of motion", a small positive value (0.05) is "this
+    take, gently varied".
+
+    ``rotations`` are local-to-parent quaternions ``(x, y, z, w)`` per frame,
+    one per ``joint_names`` entry, in the same convention as
+    ``pose_keyframe.joint_rotations``; ``root_positions`` are the root joint's
+    world position per frame (Y-up metres), as ``pose_keyframe.root_position``.
+    Quaternions are taken as sent, like ``pose_keyframe``: not required to be
+    exactly unit length; a backbone normalises them as it needs.
+
+    ``duration_frames`` is the output length at the request fps; ``None``
+    (the wire default) means the reference's own length. Read the resolved
+    count from :attr:`output_frames`. ``fps`` is the rate of the reference
+    samples, which may differ from the request's.
+
+    One per request and never mixed with other segment types; the SDK checks
+    that (``invalid_request``) along with the model's advertised support
+    (``supported_segments`` must list ``"motion_reference"``) and
+    ``limits.max_reference_frames``.
+    """
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["motion_reference"]
+    duration_frames: Optional[int] = Field(None, gt=0)
+    joint_names: list[str] = Field(..., min_length=1)
+    rotations: list[list[Quaternion]] = Field(..., min_length=2)
+    root_positions: list[Vec3] = Field(..., min_length=2)
+    fps: float = Field(..., gt=0)
+    fidelity: float = Field(0.0, ge=0.0, le=0.2)
+
+    @model_validator(mode="after")
+    def _check_shapes(self) -> "MotionReferenceSegment":
+        if len(set(self.joint_names)) != len(self.joint_names):
+            raise ValueError("joint_names must be unique")
+        t = len(self.rotations)
+        if len(self.root_positions) != t:
+            raise ValueError(
+                f"root_positions must have one entry per frame ({t}), "
+                f"got {len(self.root_positions)}"
+            )
+        j = len(self.joint_names)
+        for i, frame in enumerate(self.rotations):
+            if len(frame) != j:
+                raise ValueError(
+                    f"rotations[{i}] must have one quaternion per joint_names "
+                    f"entry ({j}), got {len(frame)}"
+                )
+        return self
+
+    @property
+    def reference_frames(self) -> int:
+        """Frames in the reference clip (T)."""
+        return len(self.rotations)
+
+    @property
+    def output_frames(self) -> int:
+        """Frames to generate: ``duration_frames``, or the reference length."""
+        return self.duration_frames if self.duration_frames is not None else len(self.rotations)
+
+
 Segment = Annotated[
-    Union[TextSegment, UnconditionedSegment, PoseSegment],
+    Union[TextSegment, UnconditionedSegment, PoseSegment, MotionReferenceSegment],
     Field(discriminator="type"),
 ]
+
+
+def segment_frames(segment) -> int:
+    """Frames a segment of any type contributes to the output."""
+    if isinstance(segment, MotionReferenceSegment):
+        return segment.output_frames
+    return segment.duration_frames
 
 
 # ---- Constraints ----------------------------------------------------------
@@ -247,9 +319,17 @@ class GenerateRequest(BaseModel):
     def total_frames(self) -> int:
         """Total frame count for the request, regardless of segment vs constraints."""
         if self.segments:
-            return sum(s.duration_frames for s in self.segments)
+            return sum(segment_frames(s) for s in self.segments)
         assert self.duration_frames is not None
         return self.duration_frames
+
+    @property
+    def motion_reference(self) -> Optional[MotionReferenceSegment]:
+        """The request's ``motion_reference`` segment, or None."""
+        for s in self.segments:
+            if isinstance(s, MotionReferenceSegment):
+                return s
+        return None
 
     def fps(self, model_native_fps: float) -> float:
         """Effective fps for this request: ``timing.fps`` if set, else the model native."""

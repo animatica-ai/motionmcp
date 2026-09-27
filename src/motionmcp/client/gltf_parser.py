@@ -130,6 +130,8 @@ def parse_gltf_samples(gltf_doc):
         # The travel trajectory, as the server sent it (glTF frame): None from
         # servers without supports_trajectory.
         motion["trajectory"] = sample.get("trajectory") if isinstance(sample, dict) else None
+        # A motion_reference result (MMCP 1.2): {"fidelity": f}; None otherwise.
+        motion["reference"] = sample.get("reference") if isinstance(sample, dict) else None
         out.append(motion)
     return out
 

@@ -138,10 +138,7 @@ def build_app(
             "response_formats":  RESPONSE_FORMATS,
             # Every model served here takes a batch body at POST /generate:
             # the SDK runs one item by item when the backbone cannot batch.
-            "models":            [b.capabilities().model_copy(update={"supports_batch": True,
-                                                                     "supports_trajectory": True})
-                                  .model_dump(mode="json")
-                                  for b in registry.values()],
+            "models":            [_spec_json(b.capabilities()) for b in registry.values()],
         }
 
     # ----- /generate ---------------------------------------------------------
@@ -198,6 +195,7 @@ def build_app(
             chunk_boundaries=result.chunk_boundaries,
             canonical_to_request=result.canonical_to_request,
             trajectories=trajectories,
+            reference=_reference_meta(req),
         )
 
     @app.post("/generate")
@@ -300,6 +298,17 @@ def build_app(
 
 # ---- Generic per-spec validation ------------------------------------------
 
+def _spec_json(spec: ModelSpec) -> dict:
+    """One model's /capabilities entry. Every model served here takes a batch
+    body and gets trajectories (the SDK provides both); a limit left unset
+    (``max_reference_frames``) is left out rather than sent as null."""
+    out = spec.model_copy(update={"supports_batch": True, "supports_trajectory": True}
+                          ).model_dump(mode="json")
+    if out.get("limits", {}).get("max_reference_frames") is None:
+        out.get("limits", {}).pop("max_reference_frames", None)
+    return out
+
+
 def _check_version(version: str) -> None:
     try:
         major = int(version.split(".", 1)[0])
@@ -352,6 +361,12 @@ async def _call_generate_batch(backbone: Backbone, reqs: list[GenerateRequest]) 
     return outcomes
 
 
+def _reference_meta(req: GenerateRequest) -> dict | None:
+    """``samples[b].reference`` for a motion_reference request, else None."""
+    ref = req.motion_reference
+    return None if ref is None else {"fidelity": float(ref.fidelity)}
+
+
 def _trajectories(req: GenerateRequest, skeleton: dict, joint_names, result, fps: float):
     """The travel trajectory of each sample, for clients that play it in place.
     Best effort: a motion whose body cannot be read (no hips found) gets none,
@@ -391,6 +406,11 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
     for s in req.segments:
         if s.type not in spec.supported_segments:
             raise unsupported_segment(s.type, list(spec.supported_segments))
+
+    # A motion reference (1.2) stands alone: one per request, no other
+    # segments, no loop. Its joints are the request skeleton's, and its length
+    # (in and out) is capped by limits.max_reference_frames when advertised.
+    _validate_motion_reference(req, spec)
 
     # Looping: only where the backbone says it can, and over one segment.
     if req.options is not None and req.options.loop:
@@ -465,6 +485,44 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
             f"total duration {duration_s:.2f}s exceeds "
             f"max_duration_seconds {spec.limits.max_duration_seconds}",
         )
+
+
+def _validate_motion_reference(req: GenerateRequest, spec) -> None:
+    refs = [s for s in req.segments if s.type == "motion_reference"]
+    if not refs:
+        return
+    if len(refs) > 1:
+        raise ProtocolError(
+            "invalid_request",
+            "a request takes at most one motion_reference segment",
+            details={"motion_reference_segments": len(refs)},
+        )
+    if len(req.segments) > 1:
+        raise ProtocolError(
+            "invalid_request",
+            "a motion_reference segment can't be mixed with other segments",
+            details={"segment_types": [s.type for s in req.segments]},
+        )
+    if req.options is not None and req.options.loop:
+        raise ProtocolError(
+            "invalid_request",
+            "options.loop is not supported with a motion_reference segment",
+        )
+    ref = refs[0]
+    skeleton_joint_names = {j.name for j in req.skeleton.joints}
+    for j in ref.joint_names:
+        if j not in skeleton_joint_names:
+            raise unknown_joint(j, sorted(skeleton_joint_names))
+    cap = spec.limits.max_reference_frames
+    if cap is not None:
+        for what, n in (("reference", ref.reference_frames), ("duration_frames", ref.output_frames)):
+            if n > cap:
+                raise ProtocolError(
+                    "invalid_options",
+                    f"motion_reference {what} has {n} frames; "
+                    f"max_reference_frames is {cap}",
+                    details={"max_reference_frames": cap, what: n},
+                )
 
 
 # ---- Convenience runner ---------------------------------------------------

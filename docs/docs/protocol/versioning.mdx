@@ -14,6 +14,13 @@ sidebar_position: 1
   fields with defaults, new response extension fields — bump the minor
   (`"1.1"`).
 
+## Changes by version
+
+- **1.2** — the [`motion_reference`](../concepts/segments#motionreferencesegment--type-motion_reference)
+  segment (variations of a clip the client sends), `limits.max_reference_frames`,
+  `MMCP_motion.samples[].reference`, and the `invalid_request` error code.
+  Opt-in: servers advertise `"motion_reference"` in `supported_segments`.
+
 ## Comparison
 
 Servers compare versions **numerically**, not lexicographically. So:

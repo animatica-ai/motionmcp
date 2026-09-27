@@ -206,6 +206,7 @@ def build_gltf(
     chunk_boundaries: Sequence[Sequence[int]] | None = None,    # per-sample int lists
     canonical_to_request: dict[str, str] | None = None,
     trajectories: Sequence[dict[str, Any] | None] | None = None,
+    reference: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a glTF 2.0 JSON document with one animation per sample.
 
@@ -238,6 +239,10 @@ def build_gltf(
     trajectories
         Optional per-sample travel trajectory (see :mod:`motionmcp.trajectory`),
         written as ``samples[b].trajectory`` in the extension.
+    reference
+        For a ``motion_reference`` request (MMCP 1.2): ``{"fidelity": f}``,
+        written as ``samples[b].reference`` on every sample so a client can
+        label the variations.
     """
     if rotations_quat.ndim != 4 or rotations_quat.shape[-1] != 4:
         raise ValueError(
@@ -321,6 +326,7 @@ def build_gltf(
         chunk_boundaries=chunk_boundaries,
         canonical_to_request=canonical_to_request,
         trajectories=trajectories,
+        reference=reference,
     )
 
     return {
@@ -358,6 +364,7 @@ def _build_extension(
     chunk_boundaries: Sequence[Sequence[int]] | None,
     canonical_to_request: dict[str, str] | None,
     trajectories: Sequence[dict[str, Any] | None] | None = None,
+    reference: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     samples: list[dict[str, Any]] = []
     for b in range(num_samples):
@@ -373,6 +380,8 @@ def _build_extension(
             }
         if trajectories and b < len(trajectories) and trajectories[b]:
             sample["trajectory"] = trajectories[b]
+        if reference:
+            sample["reference"] = dict(reference)
         samples.append(sample)
 
     block: dict[str, Any] = {

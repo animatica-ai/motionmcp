@@ -17,7 +17,7 @@ from __future__ import annotations
 import abc
 import inspect
 from dataclasses import dataclass, field
-from typing import Awaitable, Sequence
+from typing import Awaitable, Optional, Sequence
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
@@ -40,6 +40,10 @@ class Limits(BaseModel):
     max_prompt_length: int = int(DEFAULT_LIMITS["max_prompt_length"])
     max_request_bytes: int = int(DEFAULT_LIMITS["max_request_bytes"])
     max_batch_size: int = int(DEFAULT_LIMITS["max_batch_size"])
+    # Most frames a ``motion_reference`` segment may carry, and generate
+    # (``duration_frames``). Set it when ``supported_segments`` lists
+    # ``"motion_reference"``; None = no cap beyond ``max_duration_seconds``.
+    max_reference_frames: Optional[int] = Field(None, gt=0)
 
 
 class ModelSpec(BaseModel):
@@ -79,8 +83,10 @@ class ModelSpec(BaseModel):
     supported_constraints: list[str] = Field(default_factory=list)
     # Wire-format segment types this model accepts. Defaults to "text" and
     # "unconditioned" (every conforming server supports those). Backbones
-    # with a specialized text-to-pose model add "pose"; the SDK rejects
-    # any segment whose type isn't listed here.
+    # with a specialized text-to-pose model add "pose", and ones that can
+    # vary a reference clip add "motion_reference" (with
+    # ``limits.max_reference_frames``); the SDK rejects any segment whose
+    # type isn't listed here.
     supported_segments: list[str] = Field(
         default_factory=lambda: list(SUPPORTED_SEGMENTS)
     )

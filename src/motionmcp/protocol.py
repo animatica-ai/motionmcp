@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 
-PROTOCOL_VERSION = "1.0"
+PROTOCOL_VERSION = "1.2"
 PROTOCOL_MAJOR = 1
 
 ROTATION_FORMAT = "quaternion_xyzw"
@@ -19,7 +19,9 @@ SUPPORTED_CONSTRAINTS = ["root_path", "effector_target", "pose_keyframe"]
 # optional extension — backbones that have a specialized text-to-pose model
 # include it in their ``ModelSpec.supported_segments``; backbones without
 # it leave this default and the SDK rejects ``pose`` segments before they
-# reach the backbone.
+# reach the backbone. ``"motion_reference"`` (1.2) is optional the same way:
+# a backbone that can vary a reference clip lists it and sets
+# ``limits.max_reference_frames``.
 SUPPORTED_SEGMENTS = ["text", "unconditioned"]
 
 SUPPORTED_GUIDANCE_TYPES = ["nocfg", "regular", "separated"]
