@@ -234,3 +234,48 @@ def test_a_jump_up_that_lands_a_little_back_is_on_the_spot():
     t = trajectory_from_points(J, FPS, loop=False)
     assert t["model"] == "still"
     assert on_the_spot([[0, 0], [0, 0.1]]) and not on_the_spot([[0, 0], [0, 0.3]])
+
+
+def _face(J, angle):
+    """The walker's hips turned to face *angle* (radians from its own facing, per frame)."""
+    hips = J["hips"][0]
+    for side, sgn in (("l", 1), ("r", -1)):
+        left = np.stack([np.cos(angle), np.sin(angle)], 1)          # the walker faces -Y: its left is +X
+        head = hips + np.c_[left * sgn * 0.1, np.zeros(len(hips))]
+        J[f"{side}_leg"] = (head, J[f"{side}_leg"][1])
+    return J
+
+
+def test_heading_is_where_the_body_faces_not_where_it_goes():
+    """A strafe: travelling down -Y facing +X; its path never turns, and nor does it."""
+    J, _ = _walker(n=90, speed=1.0, loop=False)
+    J = _face(J, np.full(90, math.pi / 2))
+    t = trajectory_from_points(J, FPS, loop=False)
+    assert t["heading"] == "fixed"
+    assert np.allclose(t["yaw"], 0)
+
+
+def test_a_twist_that_comes_back_is_not_a_turn():
+    J, _ = _walker(n=120, speed=0.0, sway=0.02, loop=False)
+    tw = np.radians(18) * np.exp(-((np.arange(120) - 60) / 8.0) ** 2)
+    J = _face(J, tw)
+    t = trajectory_from_points(J, FPS, loop=False)
+    assert t["model"] == "still" and t["heading"] == "fixed"
+    assert np.allclose(t["yaw"], 0)
+
+
+def test_a_turn_on_the_spot_turns():
+    n = 120
+    J, _ = _walker(n=n, speed=0.0, sway=0.02, loop=False)
+    J = _face(J, np.radians(90) * np.clip((np.arange(n) - 30) / 60, 0, 1))
+    t = trajectory_from_points(J, FPS, loop=False)
+    assert t["model"] == "still"
+    assert abs(math.degrees(t["yaw"][-1]) - 90) < 6, math.degrees(t["yaw"][-1])
+    assert np.all(np.diff(t["yaw"]) >= -1e-9)               # one way only
+
+
+def test_foot_markers():
+    J, _ = _walker(n=90, speed=1.2)
+    t = trajectory_from_points(J, FPS, loop=True, root_xy=J["hips"][0][-1, :2] - J["hips"][0][0, :2])
+    m = t["markers"]
+    assert len(m["LeftFootDown"]) >= 2 and len(m["RightFootDown"]) >= 2
