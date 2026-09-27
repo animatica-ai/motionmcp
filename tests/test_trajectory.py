@@ -218,5 +218,5 @@ def test_a_stop_and_turn_back_is_still_checked_along_the_path():
     path = np.array([[0, 0], [1, 0], [2, 0], [2, 0], [2, 0], [1, 0], [0, 0]], float)
     xy = path.copy()
     xy[3] += [0.3, 0.0]                        # 30 cm off, at the stationary frame
-    along, across = _split_error(xy, path)
+    along, _ = _split_error(xy, path)
     assert abs(along[3]) > 0.29
