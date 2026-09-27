@@ -99,9 +99,9 @@ re-apply:
 
 | Field | Type | Notes |
 |---|---|---|
-| `model` | string | `still`, `line` (constant velocity), `arc` (constant speed and turn rate), `line + distance curve` / `arc + distance curve` (the same, timed by a monotone distance curve: starts, stops, jumps), or `bezier + distance curve`. The simplest within tolerance of the travel path is chosen; a loop is only ever `still`, `line` or `arc`, and closes on exactly its root's travel over the cycle, so it repeats |
+| `model` | string | The shape: `still`, `line`, `arc`, or `bezier`, the simplest within tolerance across the travel path. Along it the trajectory moves with the body (its centre of mass projected onto the shape), not at a constant speed, so played in place the body does not float forward and back with each stride. A loop is only ever `still`, `line` or `arc`, and closes on exactly its root's travel over the cycle, so it repeats |
 | `loop` | bool | The request's `options.loop` |
-| `params` | object | The model's numbers: `speed` (m/s), `heading_deg`, `turn_deg_s`, `radius_m`, `key_times_s` + `distance_keys_m` (the distance curve), `control_points_xz`; `off_cm` is its RMS distance from the travel path |
+| `params` | object | The shape's numbers: `speed` (mean, m/s) and `speed_range` [min, max], `heading_deg` (a line's), `radius_m`, `turned_deg`, `turn_deg_s` (an arc's), `control_points_xz` (a Bezier's); `off_cm` is its RMS distance across the travel path |
 | `position` | `[x, z][]` | Per frame, on the ground plane, metres, in the response's frame |
 | `yaw` | number[] | Per frame, radians about +Y, 0 at frame 0: the heading, where the body faces (square to its hips, averaged over a stride), not where its path goes. A strafe keeps facing forward; a turn on the spot turns; a twist that comes back is not a turn. A loop's closes on its turn over the cycle |
 | `heading` | string | How `yaw` was fitted: `fixed`, `steady` (a constant turn rate), `keyed` (a curve that only turns one way), or `path` (no hips to read a facing from: the path's direction) |
