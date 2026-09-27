@@ -6,10 +6,8 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from fastapi.testclient import TestClient
+import pytest
 
-from motionmcp import build_app
-from motionmcp.null_backbone import NullBackbone
 from motionmcp.trajectory import resolve_roles, trajectory_from_points
 
 FPS = 30.0
@@ -122,8 +120,19 @@ def test_roles_through_the_retargeting_map():
     assert roles["hips"] == 0 and roles["l_leg"] == 1 and roles["l_shin"] == 2 and roles["l_foot"] == 3
 
 
+def _server(backbone=None):
+    """A test client on the SDK server; skipped where only the client is installed."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from motionmcp import build_app
+    from motionmcp.null_backbone import NullBackbone
+
+    return TestClient(build_app(backbone or NullBackbone()))
+
+
 def test_server_advertises_and_returns_a_trajectory():
-    client = TestClient(build_app(NullBackbone()))
+    client = _server()
     model = client.get("/capabilities").json()["models"][0]
     assert model["supports_trajectory"] is True
     body = {
@@ -143,7 +152,7 @@ def test_server_advertises_and_returns_a_trajectory():
 def test_client_parser_hands_on_the_trajectory():
     from motionmcp.client.gltf_parser import parse_gltf_samples
 
-    client = TestClient(build_app(NullBackbone()))
+    client = _server()
     model = client.get("/capabilities").json()["models"][0]
     doc = client.post("/generate", json={
         "protocol_version": "1.0", "model": "null", "skeleton": model["canonical_skeleton"],
@@ -153,25 +162,30 @@ def test_client_parser_hands_on_the_trajectory():
     assert motion["trajectory"]["model"] == "still"
 
 
-class _LoopingWalker(NullBackbone):
+def _looping_walker():
     """Rest pose carried forward 1 m/s along +Z, swaying: a loop's travel."""
+    from motionmcp.null_backbone import NullBackbone
 
-    def capabilities(self):
-        return super().capabilities().model_copy(update={"supports_loop": True})
+    class LoopingWalker(NullBackbone):
+        def capabilities(self):
+            return super().capabilities().model_copy(update={"supports_loop": True})
 
-    async def generate(self, request):
-        result = await super().generate(request)
-        B, T = result.root_translations.shape[:2]
-        t = np.arange(T) / FPS
-        root = result.root_translations.copy()
-        root[:, :, 0] += 0.04 * np.sin(2 * np.pi * t)            # sway
-        root[:, :, 2] += 1.0 * t                                    # travel
-        result.root_translations = root
-        return result
+        async def generate(self, request):
+            result = await super().generate(request)
+            T = result.root_translations.shape[1]
+            t = np.arange(T) / FPS
+            root = result.root_translations.copy()
+            root[:, :, 0] += 0.04 * np.sin(2 * np.pi * t)            # sway
+            root[:, :, 2] += 1.0 * t                                    # travel
+            result.root_translations = root
+            return result
+
+    return LoopingWalker()
 
 
 def test_a_loop_closes_on_its_roots_travel_through_the_server():
-    client = TestClient(build_app(_LoopingWalker()))
+    pytest.importorskip("fastapi")
+    client = _server(_looping_walker())
     model = client.get("/capabilities").json()["models"][0]
     doc = client.post("/generate", json={
         "protocol_version": "1.0", "model": "null", "skeleton": model["canonical_skeleton"],
