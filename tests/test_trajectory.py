@@ -220,3 +220,17 @@ def test_a_stop_and_turn_back_is_still_checked_along_the_path():
     xy[3] += [0.3, 0.0]                        # 30 cm off, at the stationary frame
     along, _ = _split_error(xy, path)
     assert abs(along[3]) > 0.29
+
+
+def test_a_jump_up_that_lands_a_little_back_is_on_the_spot():
+    """Standing, then a jump that lands 10 cm back: no travel to take out."""
+    from motionmcp.trajectory import on_the_spot
+
+    J, _ = _walker(speed=0.0, sway=0.01, loop=False)
+    n = len(J["hips"][0])
+    shift = np.zeros((n, 3))
+    shift[n // 2:, 1] = 0.10                           # after landing, 10 cm back
+    J = {k: (h + shift, t + shift) for k, (h, t) in J.items()}
+    t = trajectory_from_points(J, FPS, loop=False)
+    assert t["model"] == "still"
+    assert on_the_spot([[0, 0], [0, 0.1]]) and not on_the_spot([[0, 0], [0, 0.3]])
