@@ -13,7 +13,7 @@ from motionmcp.trajectory import resolve_roles, trajectory_from_points
 FPS = 30.0
 
 
-def _walker(n=90, speed=1.2, sway=0.04, turn=0.0, loop=True):
+def _walker(n=90, speed=1.2, sway=0.04, turn=0.0, loop=True, ramp=False):
     """A stick walker (+Z up): the pelvis sways and surges about a line (or an
     arc, ``turn`` rad/s), feet planted in turn, one step every 0.5 s."""
     t = np.arange(n) / FPS
@@ -24,7 +24,9 @@ def _walker(n=90, speed=1.2, sway=0.04, turn=0.0, loop=True):
         path = np.stack([r * (1 - np.cos(s / r)), -r * np.sin(s / r)], 1)
         heading = s / r
     else:
-        path = np.stack([np.zeros(n), -speed * t], 1)
+        # ramp: from standing to `speed` over the take (a start, a run-up)
+        dist = speed * t * t / (2 * t[-1]) if ramp else speed * t
+        path = np.stack([np.zeros(n), -dist], 1)
         heading = np.zeros(n)
     fwd = np.stack([np.sin(heading), -np.cos(heading)], 1)
     left = np.stack([-fwd[:, 1], fwd[:, 0]], 1)
@@ -64,6 +66,17 @@ def test_straight_walk_is_a_line_at_its_speed():
     # the sway and surge are not in it: the trajectory is straight
     assert np.abs(t["xy"][:, 0]).max() < 0.01
     assert np.allclose(t["yaw"], 0)
+
+
+def test_an_acceleration_is_timed_not_averaged():
+    """A run-up from standing: a constant-speed line would run ahead of the body
+    early and behind it late -- in place, the body slides back, then forward."""
+    J, path = _walker(n=150, speed=4.0, ramp=True)
+    t = trajectory_from_points(J, FPS, loop=False)
+    assert "distance curve" in t["model"]
+    # along the direction of travel the trajectory keeps pace with the path
+    err = np.abs(t["xy"][:, 1] - path[:, 1])
+    assert err.max() < 0.08, err.max()
 
 
 def test_loop_closes_on_the_roots_travel():
@@ -197,3 +210,13 @@ def test_a_loop_closes_on_its_roots_travel_through_the_server():
     p = np.array(traj["position"])
     assert np.allclose(p[-1] - p[0], [0.0, 1.0], atol=1e-3)         # exactly the cycle's travel
     assert np.abs(p[:, 0] - p[0, 0]).max() < 0.01                   # and not its sway
+
+
+def test_a_stop_and_turn_back_is_still_checked_along_the_path():
+    from motionmcp.trajectory import _split_error
+
+    path = np.array([[0, 0], [1, 0], [2, 0], [2, 0], [2, 0], [1, 0], [0, 0]], float)
+    xy = path.copy()
+    xy[3] += [0.3, 0.0]                        # 30 cm off, at the stationary frame
+    along, _ = _split_error(xy, path)
+    assert abs(along[3]) > 0.29
