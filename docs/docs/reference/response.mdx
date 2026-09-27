@@ -70,7 +70,40 @@ response only animates joints that were sent in the request's
 | `samples[].name` | string | Matches the corresponding `animations[].name` |
 | `samples[].num_frames` | int | Frame count |
 | `samples[].chunk_boundaries` | int[] | Frame indices at which the server stitched internal chunks (relevant when the model declares `chunking: "stitched"`). Empty array when the request fit in one chunk |
-| `samples[].foot_contacts` | `{ joint_name: bool[] }` \| `{ "$accessor": int }` \| null | Per-frame contact state, keyed by joint names from the request's `skeleton.joints`. For long clips, MAY reference an `accessor` (uint8 booleans, length `num_frames × len(joints)`) via `{ "$accessor": <accessor_index> }`; the joint-name → channel-index mapping then lives in `samples[].foot_contact_joints: string[]` |
+| `samples[].foot_contacts` | `{ joint_name: bool[] }` \| `{ "$accessor": int }` \| null | Per-frame contact state, keyed by joint names from the request's `skeleton.joints`. For long clips, MAY reference an `accessor` (uint8 booleans, length `num_frames × len(joints)`) via `{ "$accessor": <accessor_index> }`; the joint-name → channel-index mapping then lives in `samples[].foot_contact_joints: string[]` || `samples[].trajectory` | object \| null | The travel trajectory: the path the motion moves along, without the body's own sway, surge, height or twist (see [below](#the-travel-trajectory)). Sent by servers with `supports_trajectory: true`; null when the body could not be read |
 
 Clients that don't need the metadata can ignore the extension entirely
 and still get a valid glTF.
+
+## The travel trajectory
+
+A client that plays a motion *in place* (a game cycle, a character driven by
+a controller) must take its travel out. Pinning the root on the ground takes
+out too much: the pelvis surges forward and back and sways side to side with
+every step, and a game moving the character at the walk's speed then sees the
+feet slide. `samples[].trajectory` is the travel alone, found from the centre
+of mass with the gait taken out and fitted with the simplest model a game can
+re-apply:
+
+```json
+"trajectory": {
+  "model": "line",
+  "loop": true,
+  "params": {"speed": 1.052, "heading_deg": 0.1, "off_cm": 0.9},
+  "position": [[0.0, 0.021], [0.0, 0.056], ...],
+  "yaw": [0.0, 0.0, ...]
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `model` | string | `still`, `line` (constant velocity), `arc` (constant speed and turn rate), `line + distance curve` / `arc + distance curve` (the same, timed by a monotone distance curve: starts, stops, jumps), or `bezier + distance curve`. The simplest within tolerance of the travel path is chosen; a loop is only ever `still`, `line` or `arc`, and closes on exactly its root's travel over the cycle, so it repeats |
+| `loop` | bool | The request's `options.loop` |
+| `params` | object | The model's numbers: `speed` (m/s), `heading_deg`, `turn_deg_s`, `radius_m`, `key_times_s` + `distance_keys_m` (the distance curve), `control_points_xz`; `off_cm` is its RMS distance from the travel path |
+| `position` | `[x, z][]` | Per frame, on the ground plane, metres, in the response's frame |
+| `yaw` | number[] | Per frame, radians about +Y, 0 at frame 0: the trajectory's own turning (an arc's) |
+
+To play a sample in place, move frame *t* by the inverse of
+`T(position[t]) · Ry(yaw[t])`, then by `T(position[0])`: the root ends where it
+began, facing the way it began, and every other part of the motion is
+untouched.

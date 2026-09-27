@@ -55,6 +55,7 @@ request body. Response is a `Capabilities` object.
 | `supports_async` | bool | If `true`, server may return `202 Accepted` for long generations (see [Async](./async)) |
 | `supports_segment_seed` | bool | If `true`, the model honours a per-segment `seed` |
 | `supports_loop` | bool | If `true`, the model samples `Options.loop` as a seamless cycle (one segment) |
+| `supports_trajectory` | bool | If `true`, every response sample carries its travel trajectory (`MMCP_motion.samples[].trajectory`, see [Response](./response#the-travel-trajectory)) |
 | `supports_batch` | bool | If `true`, `POST /generate` takes a batch body of up to `limits.max_batch_size` requests (see [Endpoints](./endpoints#batches)) |
 | `supported_constraints` | string[] | Constraint type names the model accepts |
 | `supported_segments` | string[] | Segment types the model accepts. Defaults to `["text", "unconditioned"]`; backbones with a specialized text-to-pose model add `"pose"` |
