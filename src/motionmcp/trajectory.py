@@ -439,9 +439,16 @@ class _Body:
 
 # --- the simplest trajectory ----------------------------------------------------------
 
-#: accepted within RMS 1.5 cm + 2.5 % of the distance, max 4 cm + 5 %. A motion's
-#: own wobble about a line is a few % of its length; a real curve is far outside it.
+#: A model is accepted within these of the travel path, split by direction.
+#: Across the path: RMS 1.5 cm + 2.5 % of the distance, max 4 cm + 5 % (a
+#: motion's own wobble about a line is a few % of its length; a real curve is
+#: far outside it). Along it: 2 cm RMS, 5 cm max, whatever the distance -- an
+#: error along the path is timing, and played in place it is the body sliding
+#: forward or back (a line accepted on an 11 m run had it drift 0.5 m back).
 TOL_RMS, TOL_MAX, TOL_REL = 0.015, 0.04, 0.025
+ALONG_RMS, ALONG_MAX = 0.02, 0.05
+#: distance-curve keys at most this far apart (s), besides the take's events
+KEY_GAP = 0.25
 #: on the spot: never strays further than this (or creeps < 8 cm at < 5 cm/s)
 STILL_MAX = 0.06
 MODELS = ("still", "line", "arc", "line + distance curve", "arc + distance curve", "bezier + distance curve")
@@ -472,10 +479,28 @@ def _key_times(labels, T, want=6, min_gap=0.15):
         if e - keep[-1] >= min_gap:
             keep.append(e)
     keep[-1] = float(T[-1])
-    while len(keep) < want:
+    while len(keep) < want or (len(keep) > 1 and float(np.max(np.diff(keep))) > KEY_GAP):
         g = int(np.argmax(np.diff(keep)))
         keep.insert(g + 1, (keep[g] + keep[g + 1]) / 2)
     return np.array(keep)
+
+
+def _split_error(xy, path):
+    """Distance from the travel path, split: along its direction (timing) and across it."""
+    tan = np.gradient(path, axis=0)
+    ln = np.linalg.norm(tan, axis=1, keepdims=True)
+    ok = ln[:, 0] > 1e-6
+    if not ok.any():
+        e = np.linalg.norm(xy - path, axis=1)
+        return np.zeros_like(e), e
+    idx = np.where(ok)[0]
+    tan = np.where(ok[:, None], tan / np.maximum(ln, 1e-12), 0)
+    for j in range(2):                        # standing still: the nearest direction
+        tan[:, j] = np.interp(np.arange(len(tan)), idx, tan[idx, j])
+    tan /= np.maximum(np.linalg.norm(tan, axis=1, keepdims=True), 1e-12)
+    d = xy - path
+    along = (d * tan).sum(1)
+    return along, np.abs(d[:, 0] * tan[:, 1] - d[:, 1] * tan[:, 0])
 
 
 def _monotone_keys(s, T, tk):
@@ -590,7 +615,9 @@ def _select(body: _Body):
             net = float(np.linalg.norm(path[-1] - path[0]))
             ok = mx <= STILL_MAX or (net < 0.08 and dist / max(float(T[-1]), 1e-6) < 0.05)
         else:
-            ok = rms <= tol_rms and mx <= tol_max
+            along, across = _split_error(xy, path)
+            ok = (float(np.sqrt((across ** 2).mean())) <= tol_rms and float(across.max()) <= tol_max
+                  and float(np.sqrt((along ** 2).mean())) <= ALONG_RMS and float(np.abs(along).max()) <= ALONG_MAX)
         prm = dict(prm, off_cm=round(rms * 100, 1))
         if ok:
             return xy, yaw, m, prm
