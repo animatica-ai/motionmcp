@@ -138,7 +138,8 @@ def build_app(
             "response_formats":  RESPONSE_FORMATS,
             # Every model served here takes a batch body at POST /generate:
             # the SDK runs one item by item when the backbone cannot batch.
-            "models":            [b.capabilities().model_copy(update={"supports_batch": True})
+            "models":            [b.capabilities().model_copy(update={"supports_batch": True,
+                                                                     "supports_trajectory": True})
                                   .model_dump(mode="json")
                                   for b in registry.values()],
         }
@@ -182,16 +183,21 @@ def build_app(
             if result.joint_names is not None
             else [j["name"] for j in skeleton_dict["joints"]]
         )
+        fps = req.fps(spec.fps)
+        trajectories = result.trajectories
+        if trajectories is None:
+            trajectories = _trajectories(req, skeleton_dict, joint_names, result, fps)
         return build_gltf(
             skeleton=skeleton_dict,
             joint_names=joint_names,
             rotations_quat=result.rotations,
             root_translations=result.root_translations,
-            fps=req.fps(spec.fps),
+            fps=fps,
             model_id=spec.id,
             foot_contacts=result.foot_contacts or None,
             chunk_boundaries=result.chunk_boundaries,
             canonical_to_request=result.canonical_to_request,
+            trajectories=trajectories,
         )
 
     @app.post("/generate")
@@ -344,6 +350,24 @@ async def _call_generate_batch(backbone: Backbone, reqs: list[GenerateRequest]) 
         except Exception as exc:  # noqa: BLE001 — recorded per item
             outcomes.append(exc)
     return outcomes
+
+
+def _trajectories(req: GenerateRequest, skeleton: dict, joint_names, result, fps: float):
+    """The travel trajectory of each sample, for clients that play it in place.
+    Best effort: a motion whose body cannot be read (no hips found) gets none,
+    and a failure here never fails the generation."""
+    from .trajectory import compute_trajectories
+    try:
+        return compute_trajectories(
+            skeleton=skeleton, joint_names=joint_names, rotations_quat=result.rotations,
+            root_translations=result.root_translations, fps=fps,
+            loop=bool(req.options is not None and getattr(req.options, "loop", False)),
+            canonical_to_request=result.canonical_to_request,
+        )
+    except Exception:                  # never fail a generation over it
+        import logging
+        logging.getLogger("motionmcp").exception("trajectory: could not compute")
+        return None
 
 
 def _validate_against_spec(req: GenerateRequest, spec) -> None:

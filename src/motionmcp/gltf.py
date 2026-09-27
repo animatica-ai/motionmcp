@@ -6,7 +6,7 @@ animation per generated sample. Each animation has dense per-frame ``LINEAR``
 channels: a quaternion track per joint, plus a translation track on the root.
 
 The MMCP-specific metadata (model id, fps, foot contacts, sample frame counts,
-chunk boundaries) lives in ``extensions.MMCP_motion``.
+chunk boundaries, travel trajectories) lives in ``extensions.MMCP_motion``.
 """
 
 from __future__ import annotations
@@ -205,6 +205,7 @@ def build_gltf(
     foot_contacts: dict[str, np.ndarray] | None = None,         # {joint_name: (B, T) bool}
     chunk_boundaries: Sequence[Sequence[int]] | None = None,    # per-sample int lists
     canonical_to_request: dict[str, str] | None = None,
+    trajectories: Sequence[dict[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     """Build a glTF 2.0 JSON document with one animation per sample.
 
@@ -234,6 +235,9 @@ def build_gltf(
     canonical_to_request
         Optional retargeting map (canonical joint → request joint). Echoed in
         the response extension when the server retargets.
+    trajectories
+        Optional per-sample travel trajectory (see :mod:`motionmcp.trajectory`),
+        written as ``samples[b].trajectory`` in the extension.
     """
     if rotations_quat.ndim != 4 or rotations_quat.shape[-1] != 4:
         raise ValueError(
@@ -316,6 +320,7 @@ def build_gltf(
         foot_contacts=foot_contacts,
         chunk_boundaries=chunk_boundaries,
         canonical_to_request=canonical_to_request,
+        trajectories=trajectories,
     )
 
     return {
@@ -352,6 +357,7 @@ def _build_extension(
     foot_contacts: dict[str, np.ndarray] | None,
     chunk_boundaries: Sequence[Sequence[int]] | None,
     canonical_to_request: dict[str, str] | None,
+    trajectories: Sequence[dict[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     samples: list[dict[str, Any]] = []
     for b in range(num_samples):
@@ -365,6 +371,8 @@ def _build_extension(
                 joint_name: arr[b].astype(bool).tolist()
                 for joint_name, arr in foot_contacts.items()
             }
+        if trajectories and b < len(trajectories) and trajectories[b]:
+            sample["trajectory"] = trajectories[b]
         samples.append(sample)
 
     block: dict[str, Any] = {

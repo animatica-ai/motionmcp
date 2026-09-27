@@ -70,6 +70,11 @@ class ModelSpec(BaseModel):
     # SDK server for every model it serves (it can always run a batch item by
     # item); a backbone that batches on the GPU overrides ``generate_batch``.
     supports_batch: bool = False
+    # True when each response sample carries its travel trajectory
+    # (``MMCP_motion.samples[b].trajectory``): the path the motion moves along,
+    # so a client can play it in place by removing exactly that. Advertised by
+    # the SDK server for every model (it computes it, see motionmcp.trajectory).
+    supports_trajectory: bool = False
 
     supported_constraints: list[str] = Field(default_factory=list)
     # Wire-format segment types this model accepts. Defaults to "text" and
@@ -113,6 +118,9 @@ class MotionResult:
     * ``canonical_to_request``: optional ``{canonical_joint: request_joint}``
       map echoed in the response extension. Only populate when the server
       actually retargeted.
+    * ``trajectories``: optional per-sample travel trajectory (the wire dict of
+      :mod:`motionmcp.trajectory`). Leave it None and the SDK computes it; set
+      it when the backbone knows better.
     """
 
     rotations: np.ndarray
@@ -121,6 +129,7 @@ class MotionResult:
     foot_contacts: dict[str, np.ndarray] = field(default_factory=dict)
     chunk_boundaries: Sequence[Sequence[int]] | None = None
     canonical_to_request: dict[str, str] | None = None
+    trajectories: Sequence[dict | None] | None = None
 
     def __post_init__(self) -> None:
         r = self.rotations

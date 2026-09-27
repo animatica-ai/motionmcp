@@ -91,8 +91,9 @@ def parse_gltf_samples(gltf_doc):
     buffers. Returns one ``motion_data`` dict (same shape as :func:`parse_gltf`)
     per entry, in ``animations[]`` order.
 
-    Foot contacts come from the ``MMCP_motion`` extension, whose ``samples[i]``
-    pairs with ``animations[i]``. Degrades to no contacts (never raises) when
+    Foot contacts and the travel trajectory (``motion_data["trajectory"]``,
+    None when the server sent none) come from the ``MMCP_motion`` extension,
+    whose ``samples[i]`` pairs with ``animations[i]``. Degrades to no contacts (never raises) when
     the block is absent or the lengths disagree — servers have shipped
     samples without a ``foot_contacts`` key, and a parser that refused them
     would lose the motion over metadata.
@@ -120,13 +121,17 @@ def parse_gltf_samples(gltf_doc):
     def read_acc(idx):
         return _read_accessor(gltf_doc, raw_buffers, idx)
 
-    return [
-        _parse_animation(
+    out = []
+    for anim, sample in zip(anims, ext_samples):
+        motion = _parse_animation(
             anim, nodes, read_acc,
             sample.get("foot_contacts") if isinstance(sample, dict) else None,
         )
-        for anim, sample in zip(anims, ext_samples)
-    ]
+        # The travel trajectory, as the server sent it (glTF frame): None from
+        # servers without supports_trajectory.
+        motion["trajectory"] = sample.get("trajectory") if isinstance(sample, dict) else None
+        out.append(motion)
+    return out
 
 
 def _parse_animation(anim, nodes, read_acc, contacts=None):
