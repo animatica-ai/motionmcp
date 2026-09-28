@@ -19,7 +19,9 @@ sidebar_position: 1
 - **1.2** — the [`motion_reference`](../concepts/segments#motionreferencesegment--type-motion_reference)
   segment (variations of a clip the client sends), `limits.max_reference_frames`,
   `MMCP_motion.samples[].reference`, and the `invalid_request` error code.
-  Opt-in: servers advertise `"motion_reference"` in `supported_segments`.
+  Opt-in: servers advertise `"motion_reference"` in `supported_segments`,
+  and `supports_motion_reference_mixed` when references compose with other
+  segments like text prompts.
 
 ## Comparison
 

@@ -133,7 +133,9 @@ spec.limits.max_reference_frames = 300
 ```
 
 Before `generate` runs, the SDK has checked that the segment is alone in the
-request, that `options.loop` is off, that its joints are on its own
+request (or, when you set `spec.supports_motion_reference_mixed = True`,
+that each reference in a multi-segment request has its `duration_frames`
+and `fidelity` 0, and no `pose` segment is there), that `options.loop` is off, that its joints are on its own
 `skeleton` (or the request skeleton when it has none), that `fidelity > 0`
 keeps the reference length, and that neither the reference nor `duration_frames` is longer than
 `max_reference_frames`. The segment reaches you as parsed, not resampled or
@@ -158,6 +160,21 @@ never fills in a default, so a backbone picks its own per segment type
 (Kimodo uses separated `[1.2, 1.2]` for a reference, its usual default for
 text). The SDK adds `samples[b].reference = {"fidelity": …}` to the
 response for you.
+
+With mixing on, treat a reference as one more prompt in your multi-segment
+path: `req.motion_references` lists them, and each sits in `req.segments`
+where its stretch of the take is, `output_frames` long:
+
+```python
+spec.supports_motion_reference_mixed = True
+
+for seg in req.segments:
+    if seg.type == "motion_reference":
+        caption = embed_clip(seg)        # your clip -> caption embedding
+    elif seg.type == "text":
+        caption = encode_text(seg.prompt)
+    ...                                   # same stitching for both
+```
 
 ## `generate_batch(requests)`
 

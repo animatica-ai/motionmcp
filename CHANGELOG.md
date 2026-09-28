@@ -10,11 +10,21 @@ MMCP protocol 1.2.
   (`joint_names`, per-frame local `rotations` T×J×4, `root_positions` T×3,
   `fps`) and get `options.num_samples` new performances of the same kind of
   motion, `duration_frames` long (default: the reference length). `fidelity`
-  in [0, 0.2] (default 0.0) picks how close they stay to the clip. It stands
-  alone in a request: a second reference, another segment alongside it, or
-  `options.loop` is `400 invalid_request`; T ≥ 2 and consistent lengths are
+  in [0, 0.2] (default 0.0) picks how close they stay to the clip.
+  `options.loop` with a reference is `400 invalid_request`; T ≥ 2 and consistent lengths are
   schema-checked (422); its joints must be on the request skeleton
   (`unknown_joint`).
+- A reference is a prompt like a text segment's: on a model that advertises
+  `supports_motion_reference_mixed` (new `ModelSpec` flag, default false) a
+  request may carry several, in any order, mixed with `text` /
+  `unconditioned` segments, each covering its own `duration_frames` and
+  stitched with the same transitions. With more than one segment each
+  reference needs `duration_frames` and `fidelity` 0 (`400 invalid_request`,
+  `details.segment` names it); a `pose` segment never goes with one. Without
+  the flag a reference stands alone (a second reference or another segment
+  is `400 invalid_request`), so existing backbones are unchanged.
+- `MotionReferenceSegment.seed`: per-segment seed, as `TextSegment.seed`.
+- `GenerateRequest.motion_references` (every reference, in order).
 - `MotionReferenceSegment.skeleton` (optional, the request `Skeleton`
   schema): the clip's own rig, so a reference can come from any rig. When
   set, `joint_names` / `rotations` / `root_positions` refer to it and

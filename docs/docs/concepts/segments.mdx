@@ -12,8 +12,9 @@ compose into a clip — the request's total length is
 `sum(segments[].duration_frames)`. A single [`pose`](#posesegment--type-pose)
 segment is the one exception: it produces exactly one frame and can't be
 composed with others. A [`motion_reference`](#motionreferencesegment--type-motion_reference)
-segment (1.2) also stands alone: it asks for new performances of a clip the
-client sends.
+segment (1.2) is a prompt given as a clip instead of words: alone it asks for
+new performances of that clip; on a model that advertises
+`supports_motion_reference_mixed` it composes like a `text` segment.
 
 Four segment types are defined in v1:
 
@@ -30,11 +31,19 @@ Four segment types are defined in v1:
   { "type": "pose", "prompt": "person waves hello with their right hand" }
 ]
 
-// Variations of a reference clip (1.2; alone in the request)
+// Variations of a reference clip (1.2)
 [
   { "type": "motion_reference", "joint_names": ["Hips", "Spine1"],
     "rotations": [[[0, 0, 0, 1], [0, 0, 0, 1]], [[0, 0, 0, 1], [0, 0.01, 0, 1]]],
     "root_positions": [[0, 0.95, 0], [0, 0.95, 0.03]], "fps": 30 }
+]
+
+// A walk like one clip, then a sit like another (1.2, supports_motion_reference_mixed)
+[
+  { "type": "motion_reference", "duration_frames": 90,  "joint_names": [/* … */],
+    "rotations": [/* walk clip */], "root_positions": [/* … */], "fps": 30 },
+  { "type": "motion_reference", "duration_frames": 60,  "joint_names": [/* … */],
+    "rotations": [/* sit clip */],  "root_positions": [/* … */], "fps": 30 }
 ]
 ```
 
@@ -137,12 +146,21 @@ retargets the clip from it; the output is always on the request `skeleton`.
 | `rotations` | `[x, y, z, w][][]`, T × J | yes | Local-to-parent quaternions per frame, one per `joint_names` entry, in the same convention and order as `pose_keyframe.joint_rotations`. T ≥ 2, at most `limits.max_reference_frames` |
 | `root_positions` | `[x, y, z][]`, T | yes | The root joint's world position per frame, Y-up metres, as `pose_keyframe.root_position` |
 | `fps` | number (> 0) | yes | Frame rate of the reference samples |
-| `fidelity` | number in [0, 0.2] | no, default `0.0` | `0.0`: new performances of this kind of motion. A small positive value (e.g. `0.05`): this take, gently varied (the model starts from the reference, partly noised) |
+| `fidelity` | number in [0, 0.2] | no, default `0.0` | `0.0`: new performances of this kind of motion. A small positive value (e.g. `0.05`): this take, gently varied (the model starts from the reference, partly noised). Only for a reference that is the request's only segment |
+| `seed` | int | no | Per-segment seed, as [`TextSegment.seed`](#textsegment--type-text) (models with `supports_segment_seed`) |
 
 Rules:
 
-- At most **one** `motion_reference` segment per request, and **no other
-  segments** alongside it → `400 invalid_request`.
+- **Mixing.** On a model that advertises `supports_motion_reference_mixed`
+  a reference is a prompt like a text segment's: any number of them, in any
+  order, mixed with `text` and `unconditioned` segments. Each covers its own
+  `duration_frames` of the take, and neighbouring segments are stitched
+  with the same transitions (`options.transition_frames`) as between text
+  segments. With more than one segment, every reference needs
+  `duration_frames` and `fidelity` 0 → otherwise `400 invalid_request`.
+  A `pose` segment never goes with a reference (`400 invalid_request`).
+- On a model **without** that flag a reference stands alone: a second
+  reference or another segment alongside it → `400 invalid_request`.
 - `len(rotations) == len(root_positions) == T`, every frame has one
   quaternion per `joint_names` entry, and T ≥ 2 → otherwise
   `422 schema_validation`. Quaternions are taken as sent (as for
@@ -159,11 +177,12 @@ Rules:
 - `options.num_samples` is the number of variations (its usual cap);
   `options.seed` works as for text.
 - `options.guidance`: when omitted, the server picks its default **for a
-  reference request** (which may differ from its text default); an explicit
-  guidance is honoured.
+  reference** (which may differ from its text default; a server that
+  guides segment by segment may use each segment's own default in a mixed
+  request); an explicit guidance is honoured for every segment.
 - Constraints (`root_path`, `effector_target`, `pose_keyframe`) apply to the
-  generated samples as they do for text, over frames
-  `[0, duration_frames)`.
+  generated samples as they do for text, over the whole take
+  (`[0, total_frames)`).
 - The response is the usual glTF, one animation per variation; each
   `MMCP_motion.samples[]` entry carries `reference: {"fidelity": f}`.
 
@@ -171,7 +190,9 @@ Rules:
 `"motion_reference"` in `supported_segments` and SHOULD set
 `limits.max_reference_frames`. The SDK rejects the segment for a model that
 doesn't (`unsupported_segment`), and a reference, or a `duration_frames`,
-longer than `max_reference_frames` (`invalid_options`).
+longer than `max_reference_frames` (`invalid_options`). Mixing is a
+second, separate flag (`supports_motion_reference_mixed`); clients should
+only send a reference with other segments to a model that advertises it.
 
 ## Composing
 

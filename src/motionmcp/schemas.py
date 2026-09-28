@@ -127,10 +127,17 @@ class MotionReferenceSegment(BaseModel):
     count from :attr:`output_frames`. ``fps`` is the rate of the reference
     samples, which may differ from the request's.
 
-    One per request and never mixed with other segment types; the SDK checks
-    that (``invalid_request``) along with the model's advertised support
-    (``supported_segments`` must list ``"motion_reference"``) and
-    ``limits.max_reference_frames``.
+    A reference is a prompt like a text segment's (1.2): on a model that
+    advertises ``supports_motion_reference_mixed`` a request may carry any
+    number of them, in any order, mixed with ``text`` / ``unconditioned``
+    segments, each covering its own ``duration_frames`` of the take and
+    stitched to its neighbours with the same transitions as text segments.
+    With more than one segment every reference needs ``duration_frames`` (as a
+    text segment always has) and ``fidelity`` must be 0 (``invalid_request``).
+    On a model without that flag a reference stands alone. The SDK checks
+    this along with the model's advertised support (``supported_segments``
+    must list ``"motion_reference"``) and ``limits.max_reference_frames``.
+    ``pose`` segments never go with a reference.
 
     ``skeleton`` (optional, same shape as ``GenerateRequest.skeleton``) is the
     reference clip's own rig: when present, ``joint_names`` / ``rotations`` /
@@ -149,6 +156,8 @@ class MotionReferenceSegment(BaseModel):
     root_positions: list[Vec3] = Field(..., min_length=2)
     fps: float = Field(..., gt=0)
     fidelity: float = Field(0.0, ge=0.0, le=0.2)
+    # See ``TextSegment.seed`` -- same per-segment override semantics.
+    seed: Optional[int] = None
 
     @model_validator(mode="after")
     def _check_shapes(self) -> "MotionReferenceSegment":
@@ -334,11 +343,16 @@ class GenerateRequest(BaseModel):
 
     @property
     def motion_reference(self) -> Optional[MotionReferenceSegment]:
-        """The request's ``motion_reference`` segment, or None."""
+        """The request's first ``motion_reference`` segment, or None."""
         for s in self.segments:
             if isinstance(s, MotionReferenceSegment):
                 return s
         return None
+
+    @property
+    def motion_references(self) -> list[MotionReferenceSegment]:
+        """Every ``motion_reference`` segment of the request, in order."""
+        return [s for s in self.segments if isinstance(s, MotionReferenceSegment)]
 
     def fps(self, model_native_fps: float) -> float:
         """Effective fps for this request: ``timing.fps`` if set, else the model native."""

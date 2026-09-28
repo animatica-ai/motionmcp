@@ -362,9 +362,10 @@ async def _call_generate_batch(backbone: Backbone, reqs: list[GenerateRequest]) 
 
 
 def _reference_meta(req: GenerateRequest) -> dict | None:
-    """``samples[b].reference`` for a motion_reference request, else None."""
-    ref = req.motion_reference
-    return None if ref is None else {"fidelity": float(ref.fidelity)}
+    """``samples[b].reference`` for a request with a motion_reference, else
+    None. A mixed request's references all have fidelity 0."""
+    refs = req.motion_references
+    return None if not refs else {"fidelity": max(float(r.fidelity) for r in refs)}
 
 
 def _trajectories(req: GenerateRequest, skeleton: dict, joint_names, result, fps: float):
@@ -407,10 +408,12 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
         if s.type not in spec.supported_segments:
             raise unsupported_segment(s.type, list(spec.supported_segments))
 
-    # A motion reference (1.2) stands alone: one per request, no other
-    # segments, no loop. Its joints are its own skeleton's (or the request
-    # skeleton's), fidelity > 0 keeps the clip's length, and its length
-    # (in and out) is capped by limits.max_reference_frames when advertised.
+    # A motion reference (1.2) is a prompt: alone, or -- on a model with
+    # supports_motion_reference_mixed -- one segment among others with its
+    # own duration_frames and fidelity 0. Never with loop or a pose segment.
+    # Its joints are its own skeleton's (or the request skeleton's), fidelity
+    # > 0 keeps the clip's length, and its length (in and out) is capped by
+    # limits.max_reference_frames when advertised.
     _validate_motion_reference(req, spec)
 
     # Looping: only where the backbone says it can, and over one segment.
@@ -489,27 +492,61 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
 
 
 def _validate_motion_reference(req: GenerateRequest, spec) -> None:
-    refs = [s for s in req.segments if s.type == "motion_reference"]
+    refs = req.motion_references
     if not refs:
         return
-    if len(refs) > 1:
-        raise ProtocolError(
-            "invalid_request",
-            "a request takes at most one motion_reference segment",
-            details={"motion_reference_segments": len(refs)},
-        )
-    if len(req.segments) > 1:
-        raise ProtocolError(
-            "invalid_request",
-            "a motion_reference segment can't be mixed with other segments",
-            details={"segment_types": [s.type for s in req.segments]},
-        )
     if req.options is not None and req.options.loop:
         raise ProtocolError(
             "invalid_request",
             "options.loop is not supported with a motion_reference segment",
         )
-    ref = refs[0]
+    alone = len(req.segments) == 1
+    if not alone:
+        # A reference is a prompt like a text segment's where the model says
+        # so: several, mixed with text / unconditioned, each its own stretch
+        # of the take. Elsewhere it stands alone.
+        if not getattr(spec, "supports_motion_reference_mixed", False):
+            if len(refs) > 1:
+                raise ProtocolError(
+                    "invalid_request",
+                    "this model takes at most one motion_reference segment per request",
+                    details={"motion_reference_segments": len(refs), "model": spec.id},
+                )
+            raise ProtocolError(
+                "invalid_request",
+                "this model can't mix a motion_reference segment with other segments",
+                details={"segment_types": [s.type for s in req.segments], "model": spec.id},
+            )
+        if any(s.type == "pose" for s in req.segments):
+            raise ProtocolError(
+                "invalid_request",
+                "a pose segment can't go with a motion_reference segment",
+                details={"segment_types": [s.type for s in req.segments]},
+            )
+    for i, ref in enumerate(req.segments):
+        if ref.type == "motion_reference":
+            _validate_one_reference(req, spec, ref, i, alone)
+
+
+def _validate_one_reference(req: GenerateRequest, spec, ref, index: int, alone: bool) -> None:
+    where_seg = {"segment": index}
+    if not alone:
+        # Its stretch of the take, stated like a text segment's.
+        if ref.duration_frames is None:
+            raise ProtocolError(
+                "invalid_request",
+                "a motion_reference segment needs duration_frames when the request "
+                "has more than one segment",
+                details=where_seg,
+            )
+        if ref.fidelity > 0:
+            raise ProtocolError(
+                "invalid_request",
+                "motion_reference fidelity > 0 needs the reference to be the "
+                "request's only segment",
+                details={**where_seg, "fidelity": ref.fidelity,
+                         "segments": len(req.segments)},
+            )
     # The clip's joints are its own skeleton's when it carries one (a clip from
     # another rig, retargeted by the server), else the request skeleton's.
     ref_skeleton = ref.skeleton if ref.skeleton is not None else req.skeleton
@@ -540,7 +577,7 @@ def _validate_motion_reference(req: GenerateRequest, spec) -> None:
                     "invalid_options",
                     f"motion_reference {what} has {n} frames; "
                     f"max_reference_frames is {cap}",
-                    details={"max_reference_frames": cap, what: n},
+                    details={"max_reference_frames": cap, what: n, **where_seg},
                 )
 
 

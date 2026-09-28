@@ -16,7 +16,7 @@ The body of `POST /generate`.
 | `protocol_version` | string matching `^\d+\.\d+$` | yes | Wire version. A v1.x server MUST accept any value matching `^1\.\d+$` and MAY refuse other majors with `version_unsupported` |
 | `model` | string | yes | One of `Capabilities.models[].id` |
 | `skeleton` | [`Skeleton`](../concepts/skeleton) | yes | The character's skeleton; must be sent every time |
-| `segments` | [`Segment[]`](../concepts/segments) | no, default `[]` | Discriminated union of `TextSegment`, `UnconditionedSegment`, `PoseSegment` and (1.2) `MotionReferenceSegment`; the last two stand alone. At least one of `segments` or `constraints` must be non-empty |
+| `segments` | [`Segment[]`](../concepts/segments) | no, default `[]` | Discriminated union of `TextSegment`, `UnconditionedSegment`, `PoseSegment` and (1.2) `MotionReferenceSegment`. A pose stands alone; a reference does too unless the model advertises `supports_motion_reference_mixed`, where it composes like a text segment. At least one of `segments` or `constraints` must be non-empty |
 | `constraints` | [`Constraint[]`](../concepts/constraints) | no, default `[]` | See constraint primitives |
 | `duration_frames` | int (> 0) | conditional | **Required** when `segments` is empty (constraints-only); **forbidden** when `segments` is non-empty |
 | `timing` | `{ "fps": number }` | no | If set, frames are interpreted in this fps and the response is resampled. See [Timing →](../concepts/timing) |
@@ -158,6 +158,32 @@ and the server retargets the clip from it:
   "skeleton": { "joints": [ { "name": "mixamorig:Hips", "parent": null, /* … */ }, /* … */ ] },
   "joint_names": ["mixamorig:Hips", "mixamorig:Spine", "..."],
   "rotations": [ /* … */ ], "root_positions": [ /* … */ ], "fps": 30 }
+```
+
+### Two clips in one take (1.2)
+
+To a model that also advertises `supports_motion_reference_mixed`,
+references are prompts like text segments: here a walk like one clip, then a
+sit like another (sampled on a Mixamo rig), stitched with the usual
+transition. Each reference carries its `duration_frames`; `fidelity` stays 0.
+
+```json
+{
+  "protocol_version": "1.2",
+  "model": "kimodo-soma-rp",
+  "skeleton": { "joints": [ /* the character */ ] },
+  "segments": [
+    { "type": "motion_reference", "duration_frames": 90,
+      "joint_names": ["Hips", "Spine1", "..."],
+      "rotations": [ /* walk: T × J × [x, y, z, w] */ ], "root_positions": [ /* T × 3 */ ], "fps": 30 },
+    { "type": "text", "prompt": "a person stops and looks around", "duration_frames": 45 },
+    { "type": "motion_reference", "duration_frames": 75,
+      "skeleton": { "joints": [ /* the sit clip's rig */ ] },
+      "joint_names": ["mixamorig:Hips", "..."],
+      "rotations": [ /* sit */ ], "root_positions": [ /* … */ ], "fps": 30 }
+  ],
+  "options": { "num_samples": 2, "transition_frames": 5 }
+}
 ```
 
 See **[Segments →](../concepts/segments#motionreferencesegment--type-motion_reference)**

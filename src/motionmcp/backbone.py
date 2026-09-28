@@ -69,6 +69,12 @@ class ModelSpec(BaseModel):
     # should only set ``loop`` when this is advertised; the SDK rejects it
     # otherwise.
     supports_loop: bool = False
+    # True when ``motion_reference`` segments work like text segments: several
+    # in one request, mixed with ``text`` / ``unconditioned`` ones, stitched
+    # with the same transitions (MMCP 1.2). Without it a reference stands
+    # alone and the SDK rejects anything else (``invalid_request``). Only
+    # meaningful with ``"motion_reference"`` in ``supported_segments``.
+    supports_motion_reference_mixed: bool = False
     # True when POST /generate accepts a batch body, ``{"requests": [...]}``,
     # of up to ``limits.max_batch_size`` generate requests. Advertised by the
     # SDK server for every model it serves (it can always run a batch item by
