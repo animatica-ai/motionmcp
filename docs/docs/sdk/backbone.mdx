@@ -124,57 +124,39 @@ See **[Errors →](./errors)** for the full list.
 
 ### Motion references (1.2)
 
-To take a [`motion_reference`](../concepts/segments#motionreferencesegment--type-motion_reference)
-segment, list it and cap its length:
+A [`motion_reference`](../concepts/segments#motionreferencesegment--type-motion_reference)
+segment is a prompt given as a motion. To take one, list it and cap the
+clip's length:
 
 ```python
 spec = ModelSpec(..., supported_segments=["text", "unconditioned", "motion_reference"])
 spec.limits.max_reference_frames = 300
 ```
 
-Before `generate` runs, the SDK has checked that the segment is alone in the
-request (or, when you set `spec.supports_motion_reference_mixed = True`,
-that each reference in a multi-segment request has its `duration_frames`
-and `fidelity` 0, and no `pose` segment is there), that `options.loop` is off, that its joints are on its own
-`skeleton` (or the request skeleton when it has none), that `fidelity > 0`
-keeps the reference length, and that neither the reference nor `duration_frames` is longer than
-`max_reference_frames`. The segment reaches you as parsed, not resampled or
-retargeted:
+The SDK validates a reference with the text segment's rules (it has a
+`duration_frames` and a `seed`, mixes with other segments, goes with loop,
+constraints and guidance as text does) plus its payload: joints on its own
+`skeleton` (or the request skeleton when it has none), the clip no longer
+than `max_reference_frames`. It reaches you as parsed, not resampled or
+retargeted. Treat it as a text segment whose caption embedding comes from
+the clip instead of the text encoder, and run everything else — lengths,
+seeds, guidance defaults, transitions, loop, batching — through your text
+path unchanged:
 
 ```python
-async def generate(self, req: GenerateRequest) -> MotionResult:
-    ref = req.motion_reference           # MotionReferenceSegment | None
-    if ref is not None:
-        T = ref.output_frames            # duration_frames, or the reference length
-        # ref.rotations (T_ref × J × 4), ref.root_positions (T_ref × 3),
-        # ref.joint_names, ref.fps, ref.fidelity — as the client sent them;
-        # ref.skeleton (Skeleton | None): the clip's own rig, to retarget
-        # from when set (else the joints are req.skeleton's)
-        guidance = req.options.guidance if req.options and req.options.guidance \
-            else MY_REFERENCE_GUIDANCE   # the SDK sets no guidance default
-        ...
-```
-
-`options.guidance` stays `None` when the client leaves it out; the SDK
-never fills in a default, so a backbone picks its own per segment type
-(Kimodo uses separated `[1.2, 1.2]` for a reference, its usual default for
-text). The SDK adds `samples[b].reference = {"fidelity": …}` to the
-response for you.
-
-With mixing on, treat a reference as one more prompt in your multi-segment
-path: `req.motion_references` lists them, and each sits in `req.segments`
-where its stretch of the take is, `output_frames` long:
-
-```python
-spec.supports_motion_reference_mixed = True
-
 for seg in req.segments:
     if seg.type == "motion_reference":
-        caption = embed_clip(seg)        # your clip -> caption embedding
+        # seg.rotations (T_ref × J × 4), seg.root_positions (T_ref × 3),
+        # seg.joint_names, seg.fps; seg.skeleton (Skeleton | None): the
+        # clip's own rig, to retarget from when set
+        caption = embed_clip(seg)        # clip -> the text encoder's kind of vector
     elif seg.type == "text":
         caption = encode_text(seg.prompt)
-    ...                                   # same stitching for both
+    ...                                   # the same path for both
 ```
+
+`/capabilities` advertises `supports_motion_reference_mixed: true` for such a
+model (a reference always mixes like text).
 
 ## `generate_batch(requests)`
 

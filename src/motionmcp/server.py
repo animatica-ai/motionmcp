@@ -195,7 +195,6 @@ def build_app(
             chunk_boundaries=result.chunk_boundaries,
             canonical_to_request=result.canonical_to_request,
             trajectories=trajectories,
-            reference=_reference_meta(req),
         )
 
     @app.post("/generate")
@@ -300,10 +299,14 @@ def build_app(
 
 def _spec_json(spec: ModelSpec) -> dict:
     """One model's /capabilities entry. Every model served here takes a batch
-    body and gets trajectories (the SDK provides both); a limit left unset
+    body and gets trajectories (the SDK provides both); a model that takes a
+    ``motion_reference`` takes it as a prompt, mixed like text
+    (``supports_motion_reference_mixed``); a limit left unset
     (``max_reference_frames``) is left out rather than sent as null."""
-    out = spec.model_copy(update={"supports_batch": True, "supports_trajectory": True}
-                          ).model_dump(mode="json")
+    update = {"supports_batch": True, "supports_trajectory": True}
+    if "motion_reference" in spec.supported_segments:
+        update["supports_motion_reference_mixed"] = True
+    out = spec.model_copy(update=update).model_dump(mode="json")
     if out.get("limits", {}).get("max_reference_frames") is None:
         out.get("limits", {}).pop("max_reference_frames", None)
     return out
@@ -361,13 +364,6 @@ async def _call_generate_batch(backbone: Backbone, reqs: list[GenerateRequest]) 
     return outcomes
 
 
-def _reference_meta(req: GenerateRequest) -> dict | None:
-    """``samples[b].reference`` for a request with a motion_reference, else
-    None. A mixed request's references all have fidelity 0."""
-    refs = req.motion_references
-    return None if not refs else {"fidelity": max(float(r.fidelity) for r in refs)}
-
-
 def _trajectories(req: GenerateRequest, skeleton: dict, joint_names, result, fps: float):
     """The travel trajectory of each sample, for clients that play it in place.
     Best effort: a motion whose body cannot be read (no hips found) gets none,
@@ -408,12 +404,9 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
         if s.type not in spec.supported_segments:
             raise unsupported_segment(s.type, list(spec.supported_segments))
 
-    # A motion reference (1.2) is a prompt: alone, or -- on a model with
-    # supports_motion_reference_mixed -- one segment among others with its
-    # own duration_frames and fidelity 0. Never with loop or a pose segment.
-    # Its joints are its own skeleton's (or the request skeleton's), fidelity
-    # > 0 keeps the clip's length, and its length (in and out) is capped by
-    # limits.max_reference_frames when advertised.
+    # A motion reference (1.2) is a prompt given as a motion: the rules below
+    # are the text segment's; this checks only its payload (joints on its
+    # skeleton, the clip's length against limits.max_reference_frames).
     _validate_motion_reference(req, spec)
 
     # Looping: only where the backbone says it can, and over one segment.
@@ -492,61 +485,14 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
 
 
 def _validate_motion_reference(req: GenerateRequest, spec) -> None:
-    refs = req.motion_references
-    if not refs:
-        return
-    if req.options is not None and req.options.loop:
-        raise ProtocolError(
-            "invalid_request",
-            "options.loop is not supported with a motion_reference segment",
-        )
-    alone = len(req.segments) == 1
-    if not alone:
-        # A reference is a prompt like a text segment's where the model says
-        # so: several, mixed with text / unconditioned, each its own stretch
-        # of the take. Elsewhere it stands alone.
-        if not getattr(spec, "supports_motion_reference_mixed", False):
-            if len(refs) > 1:
-                raise ProtocolError(
-                    "invalid_request",
-                    "this model takes at most one motion_reference segment per request",
-                    details={"motion_reference_segments": len(refs), "model": spec.id},
-                )
-            raise ProtocolError(
-                "invalid_request",
-                "this model can't mix a motion_reference segment with other segments",
-                details={"segment_types": [s.type for s in req.segments], "model": spec.id},
-            )
-        if any(s.type == "pose" for s in req.segments):
-            raise ProtocolError(
-                "invalid_request",
-                "a pose segment can't go with a motion_reference segment",
-                details={"segment_types": [s.type for s in req.segments]},
-            )
+    """A reference's payload: everything else about it is a text segment's
+    (length, seed, mixing, loop, constraints), checked with the text rules."""
     for i, ref in enumerate(req.segments):
         if ref.type == "motion_reference":
-            _validate_one_reference(req, spec, ref, i, alone)
+            _validate_one_reference(req, spec, ref, i)
 
 
-def _validate_one_reference(req: GenerateRequest, spec, ref, index: int, alone: bool) -> None:
-    where_seg = {"segment": index}
-    if not alone:
-        # Its stretch of the take, stated like a text segment's.
-        if ref.duration_frames is None:
-            raise ProtocolError(
-                "invalid_request",
-                "a motion_reference segment needs duration_frames when the request "
-                "has more than one segment",
-                details=where_seg,
-            )
-        if ref.fidelity > 0:
-            raise ProtocolError(
-                "invalid_request",
-                "motion_reference fidelity > 0 needs the reference to be the "
-                "request's only segment",
-                details={**where_seg, "fidelity": ref.fidelity,
-                         "segments": len(req.segments)},
-            )
+def _validate_one_reference(req: GenerateRequest, spec, ref, index: int) -> None:
     # The clip's joints are its own skeleton's when it carries one (a clip from
     # another rig, retargeted by the server), else the request skeleton's.
     ref_skeleton = ref.skeleton if ref.skeleton is not None else req.skeleton
@@ -554,15 +500,6 @@ def _validate_one_reference(req: GenerateRequest, spec, ref, index: int, alone: 
         canonical_names = [j.name for j in spec.canonical_skeleton.joints]
         if [j.name for j in ref.skeleton.joints] != canonical_names:
             raise retargeting_unsupported()
-    if ref.fidelity > 0 and ref.output_frames != ref.reference_frames:
-        raise ProtocolError(
-            "invalid_request",
-            "motion_reference fidelity > 0 needs duration_frames equal to the "
-            "reference length",
-            details={"duration_frames": ref.output_frames,
-                     "reference_frames": ref.reference_frames,
-                     "fidelity": ref.fidelity},
-        )
     skeleton_joint_names = {j.name for j in ref_skeleton.joints}
     where = ("motion_reference skeleton" if ref.skeleton is not None
              else "request skeleton")
@@ -570,15 +507,14 @@ def _validate_one_reference(req: GenerateRequest, spec, ref, index: int, alone: 
         if j not in skeleton_joint_names:
             raise unknown_joint(j, sorted(skeleton_joint_names), where)
     cap = spec.limits.max_reference_frames
-    if cap is not None:
-        for what, n in (("reference", ref.reference_frames), ("duration_frames", ref.output_frames)):
-            if n > cap:
-                raise ProtocolError(
-                    "invalid_options",
-                    f"motion_reference {what} has {n} frames; "
-                    f"max_reference_frames is {cap}",
-                    details={"max_reference_frames": cap, what: n, **where_seg},
-                )
+    if cap is not None and ref.reference_frames > cap:
+        raise ProtocolError(
+            "invalid_options",
+            f"motion_reference clip has {ref.reference_frames} frames; "
+            f"max_reference_frames is {cap}",
+            details={"max_reference_frames": cap, "reference_frames": ref.reference_frames,
+                     "segment": index},
+        )
 
 
 # ---- Convenience runner ---------------------------------------------------

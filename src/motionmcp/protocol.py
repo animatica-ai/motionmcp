@@ -20,7 +20,7 @@ SUPPORTED_CONSTRAINTS = ["root_path", "effector_target", "pose_keyframe"]
 # include it in their ``ModelSpec.supported_segments``; backbones without
 # it leave this default and the SDK rejects ``pose`` segments before they
 # reach the backbone. ``"motion_reference"`` (1.2) is optional the same way:
-# a backbone that can vary a reference clip lists it and sets
+# a backbone that can take a motion as a prompt lists it and sets
 # ``limits.max_reference_frames``.
 SUPPORTED_SEGMENTS = ["text", "unconditioned"]
 

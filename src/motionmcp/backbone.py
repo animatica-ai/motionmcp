@@ -40,9 +40,10 @@ class Limits(BaseModel):
     max_prompt_length: int = int(DEFAULT_LIMITS["max_prompt_length"])
     max_request_bytes: int = int(DEFAULT_LIMITS["max_request_bytes"])
     max_batch_size: int = int(DEFAULT_LIMITS["max_batch_size"])
-    # Most frames a ``motion_reference`` segment may carry, and generate
-    # (``duration_frames``). Set it when ``supported_segments`` lists
-    # ``"motion_reference"``; None = no cap beyond ``max_duration_seconds``.
+    # Most frames a ``motion_reference`` segment's clip may carry (the clip
+    # itself; its ``duration_frames`` is capped like any segment's, by
+    # ``max_duration_seconds``). Set it when ``supported_segments`` lists
+    # ``"motion_reference"``; None = no cap.
     max_reference_frames: Optional[int] = Field(None, gt=0)
 
 
@@ -69,11 +70,11 @@ class ModelSpec(BaseModel):
     # should only set ``loop`` when this is advertised; the SDK rejects it
     # otherwise.
     supports_loop: bool = False
-    # True when ``motion_reference`` segments work like text segments: several
-    # in one request, mixed with ``text`` / ``unconditioned`` ones, stitched
-    # with the same transitions (MMCP 1.2). Without it a reference stands
-    # alone and the SDK rejects anything else (``invalid_request``). Only
-    # meaningful with ``"motion_reference"`` in ``supported_segments``.
+    # ``motion_reference`` segments are prompts like text segments (MMCP 1.2):
+    # several in one request, mixed with ``text`` / ``unconditioned`` ones.
+    # Implied by ``"motion_reference"`` in ``supported_segments`` -- the SDK
+    # server advertises it as true for such a model, whatever is set here --
+    # and kept for clients that read it.
     supports_motion_reference_mixed: bool = False
     # True when POST /generate accepts a batch body, ``{"requests": [...]}``,
     # of up to ``limits.max_batch_size`` generate requests. Advertised by the
@@ -90,7 +91,7 @@ class ModelSpec(BaseModel):
     # Wire-format segment types this model accepts. Defaults to "text" and
     # "unconditioned" (every conforming server supports those). Backbones
     # with a specialized text-to-pose model add "pose", and ones that can
-    # vary a reference clip add "motion_reference" (with
+    # take a motion as a prompt add "motion_reference" (with
     # ``limits.max_reference_frames``); the SDK rejects any segment whose
     # type isn't listed here.
     supported_segments: list[str] = Field(

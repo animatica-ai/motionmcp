@@ -107,55 +107,52 @@ class PoseSegment(BaseModel):
 
 
 class MotionReferenceSegment(BaseModel):
-    """New performances of the kind of motion in a reference clip (MMCP 1.2).
+    """A prompt given as a motion instead of text (MMCP 1.2).
 
-    The client sends a clip — sampled from its own rig — and the model returns
-    ``options.num_samples`` new motions of the same kind, ``duration_frames``
-    long. No prompt. ``fidelity`` picks how close they stay to the clip: 0.0
-    (default) is "this kind of motion", a small positive value (0.05) is "this
-    take, gently varied".
+    The client sends a clip -- sampled from its own rig -- in place of a text
+    prompt. The model reads it as it would read a caption (a backbone turns the
+    clip into the same kind of conditioning vector its text encoder makes), so
+    the segment is a ``text`` segment in every other respect: it covers
+    ``duration_frames`` of the take, takes a per-segment ``seed``, mixes with
+    ``text`` / ``unconditioned`` / other reference segments in any order,
+    goes with constraints, ``options.loop``, ``num_samples`` and guidance
+    exactly as a text segment does, and the SDK validates it with the same
+    rules. What "a walk like this clip" produces is what the prompt "walk"
+    would: new performances of that kind of motion, not a copy of the clip.
 
     ``rotations`` are local-to-parent quaternions ``(x, y, z, w)`` per frame,
     one per ``joint_names`` entry, in the same convention as
     ``pose_keyframe.joint_rotations``; ``root_positions`` are the root joint's
     world position per frame (Y-up metres), as ``pose_keyframe.root_position``.
     Quaternions are taken as sent, like ``pose_keyframe``: not required to be
-    exactly unit length; a backbone normalises them as it needs.
-
-    ``duration_frames`` is the output length at the request fps; ``None``
-    (the wire default) means the reference's own length. Read the resolved
-    count from :attr:`output_frames`. ``fps`` is the rate of the reference
-    samples, which may differ from the request's.
-
-    A reference is a prompt like a text segment's (1.2): on a model that
-    advertises ``supports_motion_reference_mixed`` a request may carry any
-    number of them, in any order, mixed with ``text`` / ``unconditioned``
-    segments, each covering its own ``duration_frames`` of the take and
-    stitched to its neighbours with the same transitions as text segments.
-    With more than one segment every reference needs ``duration_frames`` (as a
-    text segment always has) and ``fidelity`` must be 0 (``invalid_request``).
-    On a model without that flag a reference stands alone. The SDK checks
-    this along with the model's advertised support (``supported_segments``
-    must list ``"motion_reference"``) and ``limits.max_reference_frames``.
-    ``pose`` segments never go with a reference.
+    exactly unit length; a backbone normalises them as it needs. ``fps`` is
+    the rate of the clip's samples, which may differ from the request's; the
+    clip's length is independent of ``duration_frames``.
 
     ``skeleton`` (optional, same shape as ``GenerateRequest.skeleton``) is the
     reference clip's own rig: when present, ``joint_names`` / ``rotations`` /
     ``root_positions`` refer to it and the server retargets the clip from it,
     so the clip can come from any rig; when absent they refer to the request
     skeleton. Either way the output is on the request skeleton.
-    ``duration_frames`` may differ from the reference length, except with
-    ``fidelity > 0``, which needs them equal (``invalid_request``).
+
+    Servers advertise support by listing ``"motion_reference"`` in
+    ``supported_segments``; ``limits.max_reference_frames`` caps the clip's
+    own length (the output length is capped like any segment's, by
+    ``max_duration_seconds``).
+
+    ``fidelity`` is deprecated and ignored: it is accepted only as ``0`` so
+    clients written against the first 1.2 drafts keep working.
     """
     model_config = ConfigDict(extra="forbid")
     type: Literal["motion_reference"]
-    duration_frames: Optional[int] = Field(None, gt=0)
+    duration_frames: int = Field(..., gt=0)
     skeleton: Optional[Skeleton] = None
     joint_names: list[str] = Field(..., min_length=1)
     rotations: list[list[Quaternion]] = Field(..., min_length=2)
     root_positions: list[Vec3] = Field(..., min_length=2)
     fps: float = Field(..., gt=0)
-    fidelity: float = Field(0.0, ge=0.0, le=0.2)
+    # Deprecated (first 1.2 drafts): accepted as 0 only, ignored.
+    fidelity: float = Field(0.0, ge=0.0, le=0.0, exclude=True)
     # See ``TextSegment.seed`` -- same per-segment override semantics.
     seed: Optional[int] = None
 
@@ -183,23 +180,11 @@ class MotionReferenceSegment(BaseModel):
         """Frames in the reference clip (T)."""
         return len(self.rotations)
 
-    @property
-    def output_frames(self) -> int:
-        """Frames to generate: ``duration_frames``, or the reference length."""
-        return self.duration_frames if self.duration_frames is not None else len(self.rotations)
-
 
 Segment = Annotated[
     Union[TextSegment, UnconditionedSegment, PoseSegment, MotionReferenceSegment],
     Field(discriminator="type"),
 ]
-
-
-def segment_frames(segment) -> int:
-    """Frames a segment of any type contributes to the output."""
-    if isinstance(segment, MotionReferenceSegment):
-        return segment.output_frames
-    return segment.duration_frames
 
 
 # ---- Constraints ----------------------------------------------------------
@@ -337,7 +322,7 @@ class GenerateRequest(BaseModel):
     def total_frames(self) -> int:
         """Total frame count for the request, regardless of segment vs constraints."""
         if self.segments:
-            return sum(segment_frames(s) for s in self.segments)
+            return sum(s.duration_frames for s in self.segments)
         assert self.duration_frames is not None
         return self.duration_frames
 

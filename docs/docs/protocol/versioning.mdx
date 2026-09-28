@@ -17,11 +17,10 @@ sidebar_position: 1
 ## Changes by version
 
 - **1.2** — the [`motion_reference`](../concepts/segments#motionreferencesegment--type-motion_reference)
-  segment (variations of a clip the client sends), `limits.max_reference_frames`,
-  `MMCP_motion.samples[].reference`, and the `invalid_request` error code.
-  Opt-in: servers advertise `"motion_reference"` in `supported_segments`,
-  and `supports_motion_reference_mixed` when references compose with other
-  segments like text prompts.
+  segment (a clip as the prompt, composing exactly like a text segment),
+  `limits.max_reference_frames`, and the `invalid_request` error code.
+  Opt-in: servers advertise `"motion_reference"` in `supported_segments`
+  (`supports_motion_reference_mixed` is then always true).
 
 ## Comparison
 

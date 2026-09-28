@@ -12,9 +12,8 @@ compose into a clip — the request's total length is
 `sum(segments[].duration_frames)`. A single [`pose`](#posesegment--type-pose)
 segment is the one exception: it produces exactly one frame and can't be
 composed with others. A [`motion_reference`](#motionreferencesegment--type-motion_reference)
-segment (1.2) is a prompt given as a clip instead of words: alone it asks for
-new performances of that clip; on a model that advertises
-`supports_motion_reference_mixed` it composes like a `text` segment.
+segment (1.2) is a prompt given as a clip instead of words, and composes
+exactly like a `text` segment.
 
 Four segment types are defined in v1:
 
@@ -31,14 +30,14 @@ Four segment types are defined in v1:
   { "type": "pose", "prompt": "person waves hello with their right hand" }
 ]
 
-// Variations of a reference clip (1.2)
+// Motion like a reference clip (1.2)
 [
-  { "type": "motion_reference", "joint_names": ["Hips", "Spine1"],
+  { "type": "motion_reference", "duration_frames": 90, "joint_names": ["Hips", "Spine1"],
     "rotations": [[[0, 0, 0, 1], [0, 0, 0, 1]], [[0, 0, 0, 1], [0, 0.01, 0, 1]]],
     "root_positions": [[0, 0.95, 0], [0, 0.95, 0.03]], "fps": 30 }
 ]
 
-// A walk like one clip, then a sit like another (1.2, supports_motion_reference_mixed)
+// A walk like one clip, then a sit like another (1.2)
 [
   { "type": "motion_reference", "duration_frames": 90,  "joint_names": [/* … */],
     "rotations": [/* walk clip */], "root_positions": [/* … */], "fps": 30 },
@@ -116,13 +115,20 @@ the `unsupported_segment` error code. See
 
 ## MotionReferenceSegment — `type: "motion_reference"`
 
-*Since 1.2.* Generates **new performances of the kind of motion in a
-reference clip** — "more like this". The client sends a clip sampled from
-its own rig (a take, hand keys, mocap); the server returns
-`options.num_samples` new motions of the same kind, `duration_frames` long,
-as the samples of one response. No prompt. The clip can come from **any
-rig**: send that rig as the segment's own `skeleton` and the server
-retargets the clip from it; the output is always on the request `skeleton`.
+*Since 1.2.* A **prompt given as a motion instead of words**. The client
+sends a clip sampled from its own rig (a take, hand keys, mocap) where a
+text segment would carry its prompt; the model reads the clip the way it
+reads a caption — a backbone turns it into the same kind of conditioning
+vector its text encoder makes for a prompt — and generates new motion *of
+that kind*, not a copy of the clip. Apart from that, a reference segment
+**is a text segment**: it covers `duration_frames` of the take, takes a
+`seed`, and mixes with `text`, `unconditioned` and other reference segments
+in any order, stitched with the same transitions; constraints,
+`options.loop`, `num_samples`, guidance and batching apply exactly as they
+do to text, and the SDK validates it with the text segment's rules. The
+clip can come from **any rig**: send that rig as the segment's own
+`skeleton` and the server retargets the clip from it; the output is always
+on the request `skeleton`.
 
 ```json
 {
@@ -132,67 +138,46 @@ retargets the clip from it; the output is always on the request `skeleton`.
   "joint_names": ["Hips", "Spine1", "..."],
   "rotations": [[[0, 0, 0, 1], "... one per joint"], "... one per frame"],
   "root_positions": [[0, 0.95, 0], "... one per frame"],
-  "fps": 30,
-  "fidelity": 0.0
+  "fps": 30
 }
 ```
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `type` | `"motion_reference"` | yes | Discriminator |
-| `duration_frames` | int (≥ 1) | no, default = the reference length | Output length, in frames at the request's effective fps; may differ from the reference length (T) when `fidelity` is 0. At most `limits.max_reference_frames` |
-| `skeleton` | [`Skeleton`](./skeleton), same schema as the request `skeleton` | no | *1.2.* The reference clip's own rig. When present, `joint_names`, `rotations` and `root_positions` refer to it and the server retargets the clip from it; when absent they refer to the request `skeleton` |
+| `duration_frames` | int (≥ 1) | yes | Output length, in frames at the request's effective fps, as for `text`. Independent of the clip's length |
+| `skeleton` | [`Skeleton`](./skeleton), same schema as the request `skeleton` | no | The reference clip's own rig. When present, `joint_names`, `rotations` and `root_positions` refer to it and the server retargets the clip from it; when absent they refer to the request `skeleton` |
 | `joint_names` | string[] (unique, ≥ 1) | yes | Joints of the segment's `skeleton` if given, else of the request `skeleton`; named as in `pose_keyframe.joint_rotations` |
 | `rotations` | `[x, y, z, w][][]`, T × J | yes | Local-to-parent quaternions per frame, one per `joint_names` entry, in the same convention and order as `pose_keyframe.joint_rotations`. T ≥ 2, at most `limits.max_reference_frames` |
 | `root_positions` | `[x, y, z][]`, T | yes | The root joint's world position per frame, Y-up metres, as `pose_keyframe.root_position` |
-| `fps` | number (> 0) | yes | Frame rate of the reference samples |
-| `fidelity` | number in [0, 0.2] | no, default `0.0` | `0.0`: new performances of this kind of motion. A small positive value (e.g. `0.05`): this take, gently varied (the model starts from the reference, partly noised). Only for a reference that is the request's only segment |
-| `seed` | int | no | Per-segment seed, as [`TextSegment.seed`](#textsegment--type-text) (models with `supports_segment_seed`) |
+| `fps` | number (> 0) | yes | Frame rate of the clip's samples (may differ from the request's) |
+| `seed` | int | no | Per-segment seed, as [`TextSegment.seed`](#textsegment--type-text) |
+| `fidelity` | `0` | no | *Deprecated*, from the first 1.2 drafts: accepted as `0` only, and ignored |
 
-Rules:
+The payload's own checks:
 
-- **Mixing.** On a model that advertises `supports_motion_reference_mixed`
-  a reference is a prompt like a text segment's: any number of them, in any
-  order, mixed with `text` and `unconditioned` segments. Each covers its own
-  `duration_frames` of the take, and neighbouring segments are stitched
-  with the same transitions (`options.transition_frames`) as between text
-  segments. With more than one segment, every reference needs
-  `duration_frames` and `fidelity` 0 → otherwise `400 invalid_request`.
-  A `pose` segment never goes with a reference (`400 invalid_request`).
-- On a model **without** that flag a reference stands alone: a second
-  reference or another segment alongside it → `400 invalid_request`.
 - `len(rotations) == len(root_positions) == T`, every frame has one
   quaternion per `joint_names` entry, and T ≥ 2 → otherwise
   `422 schema_validation`. Quaternions are taken as sent (as for
   `pose_keyframe`): not required to be exactly unit length.
 - Every `joint_names` entry must be a joint of the segment's `skeleton`
-  when it has one, else of the request `skeleton` → `unknown_joint`.
+  when it has one, else of the request `skeleton` → `unknown_joint`. The
+  clip must include that skeleton's root joint (`400 invalid_request`,
+  from the server).
 - A segment `skeleton` other than the model's canonical skeleton needs a
   model with `supports_retargeting` → otherwise `retargeting_unsupported`.
-- `fidelity > 0` starts from the clip itself, so it needs
-  `duration_frames` equal to the reference length T (or left out) →
-  otherwise `400 invalid_request`. At `fidelity` 0 the output length is
-  free.
-- `options.loop` is not supported with a reference → `400 invalid_request`.
-- `options.num_samples` is the number of variations (its usual cap);
-  `options.seed` works as for text.
-- `options.guidance`: when omitted, the server picks its default **for a
-  reference** (which may differ from its text default; a server that
-  guides segment by segment may use each segment's own default in a mixed
-  request); an explicit guidance is honoured for every segment.
-- Constraints (`root_path`, `effector_target`, `pose_keyframe`) apply to the
-  generated samples as they do for text, over the whole take
-  (`[0, total_frames)`).
-- The response is the usual glTF, one animation per variation; each
-  `MMCP_motion.samples[]` entry carries `reference: {"fidelity": f}`.
+- A clip longer than `limits.max_reference_frames` (when set) →
+  `400 invalid_options`.
+
+Everything else is the `text` segment's rule, unchanged. The response is
+the usual glTF, exactly as for a text request.
 
 `MotionReferenceSegment` is an **optional** capability: a model lists
 `"motion_reference"` in `supported_segments` and SHOULD set
 `limits.max_reference_frames`. The SDK rejects the segment for a model that
-doesn't (`unsupported_segment`), and a reference, or a `duration_frames`,
-longer than `max_reference_frames` (`invalid_options`). Mixing is a
-second, separate flag (`supports_motion_reference_mixed`); clients should
-only send a reference with other segments to a model that advertises it.
+doesn't (`unsupported_segment`). `supports_motion_reference_mixed` is
+advertised as `true` for every such model (a reference mixes like text);
+it is kept for clients of the first 1.2 drafts.
 
 ## Composing
 
@@ -228,7 +213,6 @@ case you MUST set `duration_frames` at the request level:
 ```
 
 When `segments` is non-empty, the request-level `duration_frames` MUST be
-omitted — the duration is `sum(segments[].duration_frames)` (a
-`motion_reference` without `duration_frames` counts its reference length).
+omitted — the duration is `sum(segments[].duration_frames)`.
 
 A request with both `segments: []` and `constraints: []` is rejected.
