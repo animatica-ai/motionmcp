@@ -52,7 +52,7 @@ The server already raises these — you don't need to:
 | `retargeting_unsupported` | Custom skeleton sent to a `supports_retargeting=False` model |
 | `unsupported_constraint` | Constraint type isn't in `model.supported_constraints` |
 | `unsupported_segment` | Segment type isn't in `model.supported_segments` |
-| `invalid_request` | A `motion_reference` segment with another segment, a second reference, or `options.loop` |
+| `invalid_request` | A `motion_reference` segment with another segment, a second reference, `options.loop`, or `fidelity > 0` with a `duration_frames` other than the reference length |
 | `unknown_joint` | Constraint references a joint name not in the skeleton |
 | `frame_out_of_range` | Constraint frame outside `[0, total_frames - 1]` |
 | `invalid_options` | num_samples / prompt length / duration / constraint count / `max_reference_frames` exceeds limits |

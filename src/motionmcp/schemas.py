@@ -131,10 +131,19 @@ class MotionReferenceSegment(BaseModel):
     that (``invalid_request``) along with the model's advertised support
     (``supported_segments`` must list ``"motion_reference"``) and
     ``limits.max_reference_frames``.
+
+    ``skeleton`` (optional, same shape as ``GenerateRequest.skeleton``) is the
+    reference clip's own rig: when present, ``joint_names`` / ``rotations`` /
+    ``root_positions`` refer to it and the server retargets the clip from it,
+    so the clip can come from any rig; when absent they refer to the request
+    skeleton. Either way the output is on the request skeleton.
+    ``duration_frames`` may differ from the reference length, except with
+    ``fidelity > 0``, which needs them equal (``invalid_request``).
     """
     model_config = ConfigDict(extra="forbid")
     type: Literal["motion_reference"]
     duration_frames: Optional[int] = Field(None, gt=0)
+    skeleton: Optional[Skeleton] = None
     joint_names: list[str] = Field(..., min_length=1)
     rotations: list[list[Quaternion]] = Field(..., min_length=2)
     root_positions: list[Vec3] = Field(..., min_length=2)

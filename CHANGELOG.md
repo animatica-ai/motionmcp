@@ -15,6 +15,13 @@ MMCP protocol 1.2.
   `options.loop` is `400 invalid_request`; T ≥ 2 and consistent lengths are
   schema-checked (422); its joints must be on the request skeleton
   (`unknown_joint`).
+- `MotionReferenceSegment.skeleton` (optional, the request `Skeleton`
+  schema): the clip's own rig, so a reference can come from any rig. When
+  set, `joint_names` / `rotations` / `root_positions` refer to it and
+  `unknown_joint` is checked against it; a non-canonical one needs
+  `supports_retargeting` (`retargeting_unsupported`).
+- `duration_frames` may differ from the reference length; with
+  `fidelity > 0` it must equal it (`400 invalid_request`).
 - `limits.max_reference_frames` (optional): when set, a reference or a
   `duration_frames` longer than it is `400 invalid_options`. Left out of
   `/capabilities` when unset.

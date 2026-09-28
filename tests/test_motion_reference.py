@@ -18,15 +18,17 @@ from motionmcp.null_backbone import NullBackbone
 class ReferenceNull(NullBackbone):
     """A NullBackbone that advertises motion_reference and keeps what it got."""
 
-    def __init__(self, max_reference_frames: int | None = 300, **kw):
+    def __init__(self, max_reference_frames: int | None = 300, retargets: bool = False, **kw):
         super().__init__(**kw)
         self.max_reference_frames = max_reference_frames
+        self.retargets = retargets
         self.received: list[GenerateRequest] = []
 
     def capabilities(self) -> ModelSpec:
         spec = super().capabilities()
         spec.supported_segments = ["text", "unconditioned", "motion_reference"]
         spec.limits.max_reference_frames = self.max_reference_frames
+        spec.supports_retargeting = self.retargets
         return spec
 
     async def generate(self, request: GenerateRequest):
@@ -119,12 +121,12 @@ def test_json_round_trip() -> None:
 
 def test_happy_path_reaches_backbone_untouched(client, backbone) -> None:
     skel, names = _joints(client)
-    seg = _segment(names, t=20, duration_frames=15, fidelity=0.05)
+    seg = _segment(names, t=15, duration_frames=15, fidelity=0.05)
     r = client.post("/generate", json=_request(skel, seg, options={"num_samples": 3}))
     assert r.status_code == 200, r.text
     got = backbone.received[-1].motion_reference
     assert got is not None
-    assert got.model_dump(mode="json") == {**seg, "fps": 30.0}
+    assert got.model_dump(mode="json") == {**seg, "fps": 30.0, "skeleton": None}
     ext = r.json()["extensions"]["MMCP_motion"]
     assert len(ext["samples"]) == 3
     assert all(s["num_frames"] == 15 for s in ext["samples"])
@@ -182,6 +184,94 @@ def test_constraints_frame_range_uses_output_length(client) -> None:
     bad = client.post("/generate", json=_request(
         skel, _segment(names, t=10), constraints=[pk]))
     assert bad.json()["error"]["code"] == "frame_out_of_range"
+
+
+# ---- fidelity keeps the clip's length ----------------------------------
+
+@pytest.mark.parametrize("t,duration,fidelity,ok", [
+    (10, 15, 0.0, True),       # fidelity 0: any output length
+    (20, 15, 0.0, True),
+    (10, None, 0.05, True),    # default length is the clip's
+    (10, 10, 0.05, True),
+    (10, 15, 0.05, False),
+    (20, 15, 0.05, False),
+])
+def test_fidelity_needs_the_reference_length(client, t, duration, fidelity, ok) -> None:
+    skel, names = _joints(client)
+    kw = {} if duration is None else {"duration_frames": duration}
+    r = client.post("/generate", json=_request(skel, _segment(names, t=t, fidelity=fidelity, **kw)))
+    if ok:
+        assert r.status_code == 200, r.text
+        assert r.json()["extensions"]["MMCP_motion"]["samples"][0]["num_frames"] == (duration or t)
+    else:
+        assert r.status_code == 400
+        err = r.json()["error"]
+        assert err["code"] == "invalid_request"
+        assert err["details"]["reference_frames"] == t and err["details"]["duration_frames"] == duration
+
+
+# ---- a reference on its own skeleton -------------------------------------
+
+_MIXAMO = {"joints": [
+    {"name": "mixamorig:Hips", "parent": None, "rest_translation": [0, 1, 0], "rest_rotation": [0, 0, 0, 1]},
+    {"name": "mixamorig:Spine", "parent": "mixamorig:Hips", "rest_translation": [0, 0.1, 0],
+     "rest_rotation": [0, 0, 0, 1]},
+    {"name": "mixamorig:Head", "parent": "mixamorig:Spine", "rest_translation": [0, 0.5, 0],
+     "rest_rotation": [0, 0, 0, 1]},
+]}
+
+
+def test_segment_skeleton_parses_and_round_trips() -> None:
+    seg = MotionReferenceSegment.model_validate(
+        _segment(["mixamorig:Hips", "mixamorig:Head"], t=4, skeleton=_MIXAMO))
+    assert [j.name for j in seg.skeleton.joints][0] == "mixamorig:Hips"
+    again = MotionReferenceSegment.model_validate(json.loads(seg.model_dump_json()))
+    assert again == seg
+
+
+def test_segment_skeleton_uses_the_skeleton_schema() -> None:
+    bad = {"joints": [{"name": "a", "parent": None, "rest_translation": [0, 0, 0],
+                       "rest_rotation": [0, 0, 0, 1]},
+                      {"name": "b", "parent": None, "rest_translation": [0, 0, 0],
+                       "rest_rotation": [0, 0, 0, 1]}]}                 # two roots
+    with pytest.raises(ValidationError):
+        MotionReferenceSegment.model_validate(_segment(["a"], t=3, skeleton=bad))
+
+
+def test_reference_from_another_rig_reaches_backbone() -> None:
+    b = ReferenceNull(retargets=True)
+    c = TestClient(build_app(b))
+    skel, _ = _joints(c)
+    names = [j["name"] for j in _MIXAMO["joints"]]
+    seg = _segment(names, t=12, duration_frames=40, skeleton=_MIXAMO)
+    r = c.post("/generate", json=_request(skel, seg))
+    assert r.status_code == 200, r.text
+    got = b.received[-1].motion_reference
+    assert [j.name for j in got.skeleton.joints] == names
+    assert got.reference_frames == 12 and got.output_frames == 40
+    assert r.json()["extensions"]["MMCP_motion"]["samples"][0]["num_frames"] == 40
+
+
+def test_unknown_joint_checks_the_reference_skeleton() -> None:
+    c = TestClient(build_app(ReferenceNull(retargets=True)))
+    skel, request_names = _joints(c)
+    # Request-skeleton names are unknown on the clip's own rig.
+    r = c.post("/generate", json=_request(skel, _segment(request_names[:2], skeleton=_MIXAMO)))
+    assert r.status_code == 400
+    err = r.json()["error"]
+    assert err["code"] == "unknown_joint"
+    assert "mixamorig:Hips" in json.dumps(err)
+
+
+def test_reference_skeleton_needs_retargeting_unless_canonical(client) -> None:
+    skel, names = _joints(client)
+    r = client.post("/generate", json=_request(
+        skel, _segment(["mixamorig:Hips"], skeleton=_MIXAMO)))
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "retargeting_unsupported"
+    # The model's own skeleton, sent explicitly, is fine without retargeting.
+    r = client.post("/generate", json=_request(skel, _segment(names, skeleton=skel)))
+    assert r.status_code == 200, r.text
 
 
 # ---- capabilities and the gate ------------------------------------------

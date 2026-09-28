@@ -408,7 +408,8 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
             raise unsupported_segment(s.type, list(spec.supported_segments))
 
     # A motion reference (1.2) stands alone: one per request, no other
-    # segments, no loop. Its joints are the request skeleton's, and its length
+    # segments, no loop. Its joints are its own skeleton's (or the request
+    # skeleton's), fidelity > 0 keeps the clip's length, and its length
     # (in and out) is capped by limits.max_reference_frames when advertised.
     _validate_motion_reference(req, spec)
 
@@ -509,10 +510,28 @@ def _validate_motion_reference(req: GenerateRequest, spec) -> None:
             "options.loop is not supported with a motion_reference segment",
         )
     ref = refs[0]
-    skeleton_joint_names = {j.name for j in req.skeleton.joints}
+    # The clip's joints are its own skeleton's when it carries one (a clip from
+    # another rig, retargeted by the server), else the request skeleton's.
+    ref_skeleton = ref.skeleton if ref.skeleton is not None else req.skeleton
+    if ref.skeleton is not None and not spec.supports_retargeting:
+        canonical_names = [j.name for j in spec.canonical_skeleton.joints]
+        if [j.name for j in ref.skeleton.joints] != canonical_names:
+            raise retargeting_unsupported()
+    if ref.fidelity > 0 and ref.output_frames != ref.reference_frames:
+        raise ProtocolError(
+            "invalid_request",
+            "motion_reference fidelity > 0 needs duration_frames equal to the "
+            "reference length",
+            details={"duration_frames": ref.output_frames,
+                     "reference_frames": ref.reference_frames,
+                     "fidelity": ref.fidelity},
+        )
+    skeleton_joint_names = {j.name for j in ref_skeleton.joints}
+    where = ("motion_reference skeleton" if ref.skeleton is not None
+             else "request skeleton")
     for j in ref.joint_names:
         if j not in skeleton_joint_names:
-            raise unknown_joint(j, sorted(skeleton_joint_names))
+            raise unknown_joint(j, sorted(skeleton_joint_names), where)
     cap = spec.limits.max_reference_frames
     if cap is not None:
         for what, n in (("reference", ref.reference_frames), ("duration_frames", ref.output_frames)):

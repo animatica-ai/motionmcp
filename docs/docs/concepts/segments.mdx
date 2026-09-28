@@ -111,12 +111,15 @@ the `unsupported_segment` error code. See
 reference clip** — "more like this". The client sends a clip sampled from
 its own rig (a take, hand keys, mocap); the server returns
 `options.num_samples` new motions of the same kind, `duration_frames` long,
-as the samples of one response. No prompt.
+as the samples of one response. No prompt. The clip can come from **any
+rig**: send that rig as the segment's own `skeleton` and the server
+retargets the clip from it; the output is always on the request `skeleton`.
 
 ```json
 {
   "type": "motion_reference",
   "duration_frames": 150,
+  "skeleton": { "joints": [ /* the clip's rig, optional */ ] },
   "joint_names": ["Hips", "Spine1", "..."],
   "rotations": [[[0, 0, 0, 1], "... one per joint"], "... one per frame"],
   "root_positions": [[0, 0.95, 0], "... one per frame"],
@@ -128,8 +131,9 @@ as the samples of one response. No prompt.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `type` | `"motion_reference"` | yes | Discriminator |
-| `duration_frames` | int (≥ 1) | no, default = the reference length | Output length, in frames at the request's effective fps. At most `limits.max_reference_frames` |
-| `joint_names` | string[] (unique, ≥ 1) | yes | Joints of the request `skeleton`, named as in `pose_keyframe.joint_rotations` |
+| `duration_frames` | int (≥ 1) | no, default = the reference length | Output length, in frames at the request's effective fps; may differ from the reference length (T) when `fidelity` is 0. At most `limits.max_reference_frames` |
+| `skeleton` | [`Skeleton`](./skeleton), same schema as the request `skeleton` | no | *1.2.* The reference clip's own rig. When present, `joint_names`, `rotations` and `root_positions` refer to it and the server retargets the clip from it; when absent they refer to the request `skeleton` |
+| `joint_names` | string[] (unique, ≥ 1) | yes | Joints of the segment's `skeleton` if given, else of the request `skeleton`; named as in `pose_keyframe.joint_rotations` |
 | `rotations` | `[x, y, z, w][][]`, T × J | yes | Local-to-parent quaternions per frame, one per `joint_names` entry, in the same convention and order as `pose_keyframe.joint_rotations`. T ≥ 2, at most `limits.max_reference_frames` |
 | `root_positions` | `[x, y, z][]`, T | yes | The root joint's world position per frame, Y-up metres, as `pose_keyframe.root_position` |
 | `fps` | number (> 0) | yes | Frame rate of the reference samples |
@@ -143,8 +147,14 @@ Rules:
   quaternion per `joint_names` entry, and T ≥ 2 → otherwise
   `422 schema_validation`. Quaternions are taken as sent (as for
   `pose_keyframe`): not required to be exactly unit length.
-- Every `joint_names` entry must be a joint of the request `skeleton` →
-  `unknown_joint`.
+- Every `joint_names` entry must be a joint of the segment's `skeleton`
+  when it has one, else of the request `skeleton` → `unknown_joint`.
+- A segment `skeleton` other than the model's canonical skeleton needs a
+  model with `supports_retargeting` → otherwise `retargeting_unsupported`.
+- `fidelity > 0` starts from the clip itself, so it needs
+  `duration_frames` equal to the reference length T (or left out) →
+  otherwise `400 invalid_request`. At `fidelity` 0 the output length is
+  free.
 - `options.loop` is not supported with a reference → `400 invalid_request`.
 - `options.num_samples` is the number of variations (its usual cap);
   `options.seed` works as for text.

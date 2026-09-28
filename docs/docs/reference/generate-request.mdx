@@ -149,5 +149,16 @@ that lists `"motion_reference"` in `supported_segments`:
 }
 ```
 
+A clip from another rig carries that rig as the segment's `skeleton` (same
+schema as the request `skeleton`); its `joint_names` are then that rig's,
+and the server retargets the clip from it:
+
+```json
+{ "type": "motion_reference", "duration_frames": 120,
+  "skeleton": { "joints": [ { "name": "mixamorig:Hips", "parent": null, /* … */ }, /* … */ ] },
+  "joint_names": ["mixamorig:Hips", "mixamorig:Spine", "..."],
+  "rotations": [ /* … */ ], "root_positions": [ /* … */ ], "fps": 30 }
+```
+
 See **[Segments →](../concepts/segments#motionreferencesegment--type-motion_reference)**
 for the rules.

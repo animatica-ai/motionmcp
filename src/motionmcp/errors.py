@@ -104,10 +104,11 @@ def unsupported_segment(
     )
 
 
-def unknown_joint(joint: str, skeleton_joints: list[str]) -> ProtocolError:
+def unknown_joint(joint: str, skeleton_joints: list[str],
+                  skeleton: str = "request skeleton") -> ProtocolError:
     return ProtocolError(
         "unknown_joint",
-        f"joint {joint!r} is not in the request skeleton",
+        f"joint {joint!r} is not in the {skeleton}",
         details={"skeleton_joints": skeleton_joints},
     )
 
