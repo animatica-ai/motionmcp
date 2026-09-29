@@ -131,6 +131,33 @@ POSTs it to `/generate` and returns the glTF 2.0 document as a dict.
   client unpacks it with `glb_to_gltf` into the same glTF JSON document
   the JSON path returns, so callers never branch on the content type.
 
+### Resuming a poll after a token refresh
+
+When the server answers `202`, the job is already running. If polling it
+then fails — most often a `401` because the access token expired
+mid-job — calling `generate()` again would start a *second* job. Every
+`MmcpError` from `generate()` names its phase in `details["phase"]`:
+`"generate"` when the `POST` itself failed, `"poll"` when the job was
+accepted and polling it failed. A poll error also carries
+`details["location"]`, the job path relative to the server URL, and
+**`poll_job(server_url, location, *, retry_after=2.0, timeout=600.0,
+access_token=None, on_progress=None)`** picks the same job up again:
+
+```python
+try:
+    return client.generate(url, request_body, access_token=token)
+except client.MmcpError as e:
+    if e.code == "auth_required" and e.details.get("phase") == "poll":
+        token = refresh()
+        return client.poll_job(url, e.details["location"], access_token=token)
+    raise
+```
+
+`poll_job` behaves as the polling inside `generate()` does: at least
+0.5 s between polls, `Retry-After` honoured, GLB unpacked, `timeout`
+counted from the start of polling. Its own errors carry the same
+`phase` and `location`, so the retry can repeat.
+
 `glb_to_gltf(data)` is public too, for GLB bytes you got some other way:
 
 ```python
@@ -168,6 +195,13 @@ except MmcpError as exc:
   | `status` | The HTTP status (unless the server already named one) |
   | `retry_after` | The `Retry-After` header, in seconds, when numeric |
   | `request_id` | `X-Request-ID`, or `X-Job-Id` if that is absent |
+
+  and, on anything `generate()` or `poll_job()` raises:
+
+  | Key | From |
+  |---|---|
+  | `phase` | `"generate"` (the `POST`) or `"poll"` (polling an accepted job) |
+  | `location` | The polled job path, relative to the server URL; `"poll"` only |
 
 See **[Errors reference →](../reference/errors)** for the codes a server
 can send.

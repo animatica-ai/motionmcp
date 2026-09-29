@@ -22,6 +22,7 @@ from motionmcp.client.http import (
     clear_capabilities_cache,
     generate,
     get_capabilities,
+    poll_job,
     probe_server,
 )
 
@@ -392,3 +393,83 @@ class TestHttpErrorMapping:
 
         assert exc_info.value.code == "http_error"
         assert exc_info.value.details["status"] == 422
+
+
+class TestResumablePolling:
+    """Errors name their phase; a failed poll resumes with ``poll_job``, no second POST."""
+
+    def test_401_while_polling_names_the_poll_phase_and_location(self, mmcp_server):
+        mmcp_server.enqueue(202, headers={"Location": "/generate/jobs/1", "Retry-After": "0"})
+        mmcp_server.enqueue(401)
+
+        with pytest.raises(MmcpError) as exc_info:
+            generate(mmcp_server.url, {"prompt": "walk"}, timeout=5, access_token="old")
+
+        err = exc_info.value
+        assert err.code == "auth_required"
+        assert err.details == {"status": 401, "phase": "poll", "location": "/generate/jobs/1"}
+
+    def test_poll_job_resumes_the_same_job_without_a_post(self, mmcp_server):
+        doc = build_gltf()
+        mmcp_server.enqueue(202, headers={"Location": "/generate/jobs/1", "Retry-After": "0"})
+        mmcp_server.enqueue(401)
+        mmcp_server.enqueue(200, headers={"Content-Type": "model/gltf+json"},
+                            body=json.dumps(doc))
+
+        with pytest.raises(MmcpError) as exc_info:
+            generate(mmcp_server.url, {"prompt": "walk"}, timeout=5, access_token="old")
+        result = poll_job(mmcp_server.url, exc_info.value.details["location"],
+                          retry_after=0, timeout=5, access_token="fresh")
+
+        assert result == doc
+        assert [r.method for r in mmcp_server.requests] == ["POST", "GET", "GET"]
+        resume = mmcp_server.requests[-1]
+        assert resume.path == "/generate/jobs/1"
+        assert resume.header("Authorization") == "Bearer fresh"
+
+    def test_absolute_location_is_polled_and_reported_as_a_path(self, mmcp_server):
+        mmcp_server.enqueue(500)
+
+        with pytest.raises(MmcpError) as exc_info:
+            poll_job(mmcp_server.url, mmcp_server.url + "/generate/jobs/7",
+                     retry_after=0, timeout=5)
+
+        assert mmcp_server.requests[0].path == "/generate/jobs/7"
+        assert exc_info.value.details["location"] == "/generate/jobs/7"
+
+    def test_poll_timeout_names_the_poll_phase(self, mmcp_server):
+        for _ in range(4):
+            mmcp_server.enqueue(202, headers={"Retry-After": "0"})
+
+        with pytest.raises(MmcpError) as exc_info:
+            poll_job(mmcp_server.url, "/generate/jobs/1", retry_after=0, timeout=0.8)
+
+        assert exc_info.value.code == "timeout"
+        assert exc_info.value.details == {"phase": "poll", "location": "/generate/jobs/1"}
+
+    def test_401_on_the_post_names_the_generate_phase(self, mmcp_server):
+        mmcp_server.enqueue(401)
+
+        with pytest.raises(MmcpError) as exc_info:
+            generate(mmcp_server.url, {"prompt": "walk"}, timeout=5)
+
+        err = exc_info.value
+        assert err.code == "auth_required"
+        assert err.details == {"status": 401, "phase": "generate"}
+        assert len(mmcp_server.requests) == 1
+
+    def test_unreachable_server_names_the_generate_phase(self):
+        with pytest.raises(MmcpError) as exc_info:
+            generate("http://127.0.0.1:9", {"prompt": "walk"}, timeout=2)
+
+        assert exc_info.value.code == "connection_failed"
+        assert exc_info.value.details["phase"] == "generate"
+        assert "location" not in exc_info.value.details
+
+    def test_poll_job_is_exported(self):
+        from motionmcp import client
+        from motionmcp.client import http
+
+        assert "poll_job" in client.__all__
+        assert "poll_job" in http.__all__
+        assert client.poll_job is http.poll_job
