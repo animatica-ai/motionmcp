@@ -197,6 +197,9 @@ sending a file inline: a server refuses one over it with
 `413 payload_too_large`, and the whole body must still fit
 `limits.max_request_bytes` (base64 is a third bigger than the file).
 
+Building a `motion_reference` from a rig, and more on video references,
+is in **[Building reference segments →](../guides/reference-segments)**.
+
 ## Errors
 
 Every transport or server-side failure raises `MmcpError` (a

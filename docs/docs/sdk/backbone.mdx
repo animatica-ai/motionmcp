@@ -156,7 +156,9 @@ for seg in req.segments:
 ```
 
 `/capabilities` advertises `supports_motion_reference_mixed: true` for such a
-model (a reference always mixes like text).
+model (a reference always mixes like text). What clients send — rotations
+from rest with identity `rest_rotation`, the root's world position, any
+rig's own skeleton — is in **[Building reference segments →](../guides/reference-segments)**.
 
 ### Video references (1.2)
 

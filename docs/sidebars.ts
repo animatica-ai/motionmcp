@@ -51,6 +51,13 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: "category",
+      label: "Guides",
+      collapsed: false,
+      collapsible: false,
+      items: ["guides/reference-segments"],
+    },
+    {
+      type: "category",
       label: "Reference",
       collapsed: false,
       collapsible: false,

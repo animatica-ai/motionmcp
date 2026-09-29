@@ -161,6 +161,10 @@ on the request `skeleton`.
 | `seed` | int | no | Per-segment seed, as [`TextSegment.seed`](#textsegment--type-text) |
 | `fidelity` | `0` | no | *Deprecated*, from the first 1.2 drafts: accepted as `0` only, and ignored |
 
+To build one from a rig (the conventions, sampling a clip in numpy or
+Blender, BVH and FBX, the size budget), see
+**[Building reference segments →](../guides/reference-segments)**.
+
 The payload's own checks:
 
 - `len(rotations) == len(root_positions) == T`, every frame has one
@@ -235,7 +239,9 @@ segment's rules.
 | `fps` | number (> 0) | no | A hint for the video's frame rate, for containers that report it badly |
 | `seed` | int | no | Per-segment seed, as [`TextSegment.seed`](#textsegment--type-text) |
 
-Unknown fields are rejected (`422`), in the segment and in `video`.
+Unknown fields are rejected (`422`), in the segment and in `video`. To
+build one (inline or by URL, the size math, trimming, choosing a person),
+see **[Building reference segments →](../guides/reference-segments)**.
 
 The payload's own checks:
 

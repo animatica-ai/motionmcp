@@ -1,0 +1,489 @@
+---
+id: reference-segments
+title: Building reference segments
+description: How to build a motion_reference from a clip (numpy, Blender, BVH, FBX) and a video_reference from a video, step by step.
+sidebar_position: 1
+---
+
+# Building reference segments
+
+A [`motion_reference`](../concepts/segments#motionreferencesegment--type-motion_reference)
+or [`video_reference`](../concepts/segments#videoreferencesegment--type-video_reference)
+segment is a prompt given as a clip or a video instead of words. The
+[Segments](../concepts/segments) page lists their fields; this page is
+for the client author who has to fill them in: what each number means,
+how to sample it from a rig, and what the server says when it is wrong.
+
+The conventions below are what the reference server (Kimodo, the first
+server to implement `motion_reference`) reads, and what the Animatica
+Blender add-on sends.
+
+## The data a `motion_reference` carries
+
+A clip is T frames of J joints. `joint_names` fixes the joint order once;
+every frame then lists one rotation per joint in that order, and one root
+position:
+
+```text
+joint_names      = [ "Hips",        "Spine",       "Head"        ]     J = 3
+                       j = 0          j = 1          j = 2
+rotations[0]     = [ [x, y, z, w],  [x, y, z, w],  [x, y, z, w]  ]     frame 0
+rotations[1]     = [ [x, y, z, w],  [x, y, z, w],  [x, y, z, w]  ]     frame 1
+  ...                                                                   ...
+rotations[T-1]   = [ ...                                          ]     frame T-1
+
+root_positions   = [ [x, y, z], [x, y, z], ..., [x, y, z] ]            T entries
+fps              = 30                                                   the clip's sample rate
+```
+
+| Quantity | Convention |
+|---|---|
+| Axes, units | Right-handed, **Y-up, metres**, as everywhere in MMCP (see [Coordinate systems](../concepts/coordinates)) |
+| `rotations[t][j]` | Quaternion **`[x, y, z, w]`** (glTF order, `w` last) |
+| What a rotation is | Joint `j`'s **local rotation relative to its parent**, measured **from the rest pose**: `[0, 0, 0, 1]` means "as in the rest pose". The same convention as `pose_keyframe.joint_rotations` |
+| `root_positions[t]` | The **root joint's world position** at frame t (the joint whose `parent` is `null`), not an offset from frame 0 |
+| Quaternion length | Taken as sent; the server normalises. Round to 4 decimals |
+
+**Rest rotations are identity.** Send `rest_rotation: [0, 0, 0, 1]` on
+every joint of the skeleton (see [below](#the-skeleton)). Then every
+joint's rest frame is aligned with the world axes, and "a joint's local
+rotation from rest" is simply *the rotation the joint has turned through
+since the rest pose, expressed in world (MMCP) axes*, relative to its
+parent's. That is what the Blender example below computes. The reference
+server reads a rig's rest pose from `rest_translation` alone and treats an
+identity rotation as rest; it does not use a non-identity
+`rest_rotation`, so don't rely on one.
+
+**Absolute root positions.** Send where the root really is, frame by
+frame, in the rig's world. You do not need to move the clip to the
+origin or turn it to face +Z: the reference server canonicalises it
+(the clip's first frame becomes heading 0 at x = z = 0), so the same motion
+recorded anywhere in the scene gives the same prompt. The height is kept
+as sent.
+
+## The skeleton
+
+The clip's joints are joints of a skeleton, and the server needs that
+skeleton to read the clip. It is either the **request `skeleton`** (the
+character you are generating for) or the segment's **own `skeleton`**
+(the rig the clip was recorded on):
+
+| Case | Send |
+|---|---|
+| The clip was sampled from the character you are generating for | nothing extra: `joint_names` refer to the request `skeleton` |
+| The clip comes from another rig (a mocap library, another character, a Mixamo download) | that rig as the segment's `skeleton`; `joint_names` refer to it, and the server retargets the clip from it |
+
+Either way the output is on the request skeleton. A segment `skeleton`
+that isn't the model's canonical skeleton needs a model with
+`supports_retargeting` (Kimodo has it).
+
+Each joint of a skeleton is:
+
+```json
+{ "name": "Spine", "parent": "Hips",
+  "rest_translation": [0.0, 0.25, 0.0], "rest_rotation": [0.0, 0.0, 0.0, 1.0] }
+```
+
+- **`name`** — any unique string. Names are not a fixed vocabulary: the
+  reference server finds hips, spine, legs, arms and head from the
+  skeleton's structure and rest positions (with the names as hints, after
+  dropping a common prefix such as `mixamorig:`), so a Mixamo, Rigify or
+  BVH rig can be sent as it is.
+- **`parent`** — the parent joint's name; exactly one joint has `null`
+  (the root). List every parent before its children.
+- **`rest_translation`** — the joint's rest position minus its parent's,
+  in metres, along the world axes. For the root, its rest position in the
+  world. (With identity rest rotations this is also the offset in the
+  parent's frame.)
+- **`rest_rotation`** — `[0, 0, 0, 1]`.
+
+**Joint coverage.**
+
+- `joint_names` must include the skeleton's **root joint**
+  (`400 invalid_request` otherwise), and every name must be a joint of
+  the skeleton (`unknown_joint`).
+- Joints of the skeleton that the clip leaves out stay at rest.
+- Joints the model has no use for (fingers, twist bones, face) are
+  accepted and follow their parent, so you can send the whole rig.
+- If the rig has a scene root above the pelvis (an `Armature` or
+  `Reference` joint), that is the root: `root_positions` is its position,
+  and it must be in `joint_names`.
+
+## Sampling a clip
+
+1. **Evaluate every frame** of the stretch you want, in order, at the
+   clip's own rate. Evaluate the rig (constraints, drivers, IK) rather
+   than reading raw keys, so the reference is what the viewer sees.
+2. For each frame take **each joint's local rotation from rest** and the
+   **root's world position**, converted to Y-up metres.
+3. Keep **quaternion sign continuity**: `q` and `−q` are the same
+   rotation, but a sign flip between frames looks like a jump to anything
+   that interpolates. For each joint, if `dot(q_prev, q) < 0`, send `−q`.
+4. Set **`fps`** to the rate you sampled at. It need not be the request's
+   rate: the server resamples the clip to the model's own rate.
+5. Set **`duration_frames`** to the length you want *out*, at the
+   request's fps. It is independent of the clip's length: a 1-second clip
+   can prompt a 5-second segment, and a 10-second clip a 2-second one.
+
+**Length.** `limits.max_reference_frames` (300 on Kimodo) caps the
+number of frames you send, counted as sent, before any resampling. A
+server may also check the clip after resampling it to its own rate
+(Kimodo does, at its model rate). To fit, either trim the clip to the part that
+matters or thin it: keep every k-th frame and divide `fps` by k. Two to
+ten seconds is usually plenty to say "this kind of motion".
+
+**Size.** A frame is `4·J + 3` numbers. Rounded to 4 decimals, a number
+is about 8 bytes of JSON, so a frame is about `8 × (4·J + 3)` bytes:
+
+| Rig | Per frame | 2 s at 30 fps (60 frames) | 10 s at 30 fps (300 frames) |
+|---|---|---|---|
+| 30 joints (a body rig) | ≈ 1.0 KB | ≈ 58 KB | ≈ 290 KB |
+| 77 joints (with fingers) | ≈ 2.4 KB | ≈ 146 KB | ≈ 730 KB |
+
+The whole request must fit `limits.max_request_bytes` (1 MiB by
+default), and that includes the request skeleton, any segment skeleton,
+and every other segment. A long clip on a finger-rig is the case to watch:
+drop to 3 decimals, thin the clip, or leave the fingers out of
+`joint_names` (they stay at rest and the model doesn't use them). Send
+compact JSON (no indentation) as well.
+
+## Example: numpy
+
+A 3-joint chain, built by hand. It runs as it is; to send it, POST
+`request` with `motionmcp.client.generate(server_url, request)` to a
+model that lists `"motion_reference"`.
+
+```python
+import json
+
+import numpy as np
+
+# A 3-joint chain: Hips -> Spine -> Head, Y-up metres.
+skeleton = {"joints": [
+    {"name": "Hips",  "parent": None,   "rest_translation": [0.0, 0.95, 0.0],
+     "rest_rotation": [0.0, 0.0, 0.0, 1.0]},
+    {"name": "Spine", "parent": "Hips", "rest_translation": [0.0, 0.25, 0.0],
+     "rest_rotation": [0.0, 0.0, 0.0, 1.0]},
+    {"name": "Head",  "parent": "Spine", "rest_translation": [0.0, 0.35, 0.0],
+     "rest_rotation": [0.0, 0.0, 0.0, 1.0]},
+]}
+joint_names = [j["name"] for j in skeleton["joints"]]
+
+
+def quat_about_y(angle):
+    """[x, y, z, w] for a rotation of `angle` radians about +Y."""
+    return np.array([0.0, np.sin(angle / 2), 0.0, np.cos(angle / 2)])
+
+
+def quat_about_x(angle):
+    return np.array([np.sin(angle / 2), 0.0, 0.0, np.cos(angle / 2)])
+
+
+fps = 30.0
+T = 4                                   # 4 frames here; a real clip has ~2 s
+t = np.arange(T) / fps
+
+rotations = np.empty((T, len(joint_names), 4))
+rotations[:, 0] = [quat_about_y(0.3 * np.sin(2 * np.pi * s)) for s in t]   # hips sway
+rotations[:, 1] = [quat_about_x(0.1) for _ in t]                            # spine bent forward
+rotations[:, 2] = [quat_about_y(-0.2) for _ in t]                           # head turned
+root_positions = np.stack([np.zeros(T), np.full(T, 0.95), 1.2 * t], axis=1)  # walking +Z
+
+# Keep each joint's quaternions on one hemisphere: q and -q are the same
+# rotation, but a sign flip between frames reads as a jump.
+for i in range(1, T):
+    flip = np.sum(rotations[i] * rotations[i - 1], axis=-1) < 0
+    rotations[i][flip] *= -1
+
+segment = {
+    "type": "motion_reference",
+    "duration_frames": 90,              # the output: 3 s at the request's fps
+    "joint_names": joint_names,
+    "rotations": np.round(rotations, 4).tolist(),
+    "root_positions": np.round(root_positions, 4).tolist(),
+    "fps": fps,
+}
+request = {
+    "protocol_version": "1.2",
+    "model": "kimodo-soma-rp",
+    "skeleton": skeleton,
+    "segments": [segment],
+}
+print(json.dumps(segment, indent=2))
+```
+
+The segment it prints (4 frames, 3 joints; wrapped here):
+
+```json
+{
+  "type": "motion_reference",
+  "duration_frames": 90,
+  "joint_names": ["Hips", "Spine", "Head"],
+  "rotations": [
+    [[0.0, 0.0, 0.0, 1.0],    [0.05, 0.0, 0.0, 0.9988], [0.0, -0.0998, 0.0, 0.995]],
+    [[0.0, 0.0312, 0.0, 0.9995], [0.05, 0.0, 0.0, 0.9988], [0.0, -0.0998, 0.0, 0.995]],
+    [[0.0, 0.061, 0.0, 0.9981],  [0.05, 0.0, 0.0, 0.9988], [0.0, -0.0998, 0.0, 0.995]],
+    [[0.0, 0.0881, 0.0, 0.9961], [0.05, 0.0, 0.0, 0.9988], [0.0, -0.0998, 0.0, 0.995]]
+  ],
+  "root_positions": [[0.0, 0.95, 0.0], [0.0, 0.95, 0.04], [0.0, 0.95, 0.08], [0.0, 0.95, 0.12]],
+  "fps": 30.0
+}
+```
+
+Here the clip is on the request skeleton, so the segment carries no
+`skeleton` of its own. Real clips need at least 2 frames and usually
+have 60 or more.
+
+## Example: Blender
+
+This samples the active armature's action into a `motion_reference`
+with the clip's own `skeleton`, converting Blender's Z-up to MMCP's Y-up
+the way the Animatica add-on does:
+
+- positions `(x, y, z)` → `(x, z, −y)`, after the object's world matrix
+  (so an armature scaled 0.01, as Mixamo imports are, comes out in
+  metres);
+- rotations as a change of basis: the bone's rotation from rest is taken
+  from the evaluated `pose_bone.matrix`, moved into armature axes by the
+  bone's rest matrix, into world axes by the object's rotation, and into
+  MMCP axes by the Z-up → Y-up swap `S`.
+
+Run it in Blender's Python console or with
+`blender file.blend --background --python sample_reference.py`; it writes
+`reference.json` next to the `.blend`.
+
+```python
+import json
+
+import bpy
+from mathutils import Matrix
+
+# MMCP (Y-up) axes in Blender (Z-up) coordinates: MMCP x, y, z = Blender x, z, -y.
+S = Matrix(((1.0, 0.0, 0.0),
+            (0.0, 0.0, -1.0),
+            (0.0, 1.0, 0.0)))
+
+
+def to_mmcp_pos(v):
+    return [round(v.x, 4) + 0.0, round(v.z, 4) + 0.0, round(-v.y, 4) + 0.0]
+
+
+def bones_parents_first(arm):
+    """The armature's bones, every parent before its children."""
+    order, todo = [], [b for b in arm.data.bones if b.parent is None]
+    while todo:
+        b = todo.pop(0)
+        order.append(b)
+        todo.extend(b.children)
+    return order
+
+
+def build_skeleton(arm):
+    """The armature's rest pose as an MMCP skeleton: each joint at its rest head,
+    offset from its parent's in world axes, with an identity rest rotation."""
+    mw = arm.matrix_world
+    head = {b.name: mw @ b.head_local for b in arm.data.bones}
+    joints = []
+    for b in bones_parents_first(arm):
+        offset = head[b.name] - head[b.parent.name] if b.parent else head[b.name]
+        joints.append({"name": b.name,
+                       "parent": b.parent.name if b.parent else None,
+                       "rest_translation": to_mmcp_pos(offset),
+                       "rest_rotation": [0.0, 0.0, 0.0, 1.0]})
+    return {"joints": joints}
+
+
+def local_basis(pb):
+    """The bone's evaluated rotation relative to its rest, in its own rest frame
+    (pose_bone.matrix, so constraints and drivers count)."""
+    if pb.parent is None:
+        return pb.bone.matrix_local.inverted() @ pb.matrix
+    offset = pb.bone.matrix_local.inverted() @ pb.parent.bone.matrix_local
+    return offset @ pb.parent.matrix.inverted() @ pb.matrix
+
+
+def mmcp_rotation(pb, mw_rot):
+    """[x, y, z, w]: the bone's rotation from rest, in MMCP world axes."""
+    ml = pb.bone.matrix_local.to_3x3()
+    r = ml @ local_basis(pb).to_3x3() @ ml.transposed()      # armature axes
+    r = mw_rot @ r @ mw_rot.transposed()                       # world axes
+    w, x, y, z = (S.transposed() @ r @ S).to_quaternion()      # MMCP axes
+    return [x, y, z, w]
+
+
+def sample_reference(arm, frame_start, frame_end, duration_frames):
+    scene = bpy.context.scene
+    names = [b.name for b in bones_parents_first(arm)]
+    root = arm.pose.bones[names[0]]                          # the one bone with no parent
+    mw_rot = arm.matrix_world.to_quaternion().to_matrix()
+    rotations, roots = [], []
+    for f in range(frame_start, frame_end + 1):              # every frame
+        scene.frame_set(f)
+        pose = [mmcp_rotation(arm.pose.bones[n], mw_rot) for n in names]
+        if rotations:                                         # sign continuity
+            for q, prev in zip(pose, rotations[-1]):
+                if sum(a * b for a, b in zip(q, prev)) < 0.0:
+                    q[:] = [-c for c in q]
+        rotations.append(pose)
+        roots.append(to_mmcp_pos((arm.matrix_world @ root.matrix).translation))
+    return {
+        "type": "motion_reference",
+        "duration_frames": duration_frames,
+        "joint_names": names,
+        "rotations": [[[round(c, 4) + 0.0 for c in q] for q in pose] for pose in rotations],
+        "root_positions": roots,
+        "fps": scene.render.fps / scene.render.fps_base,
+    }
+
+
+arm = bpy.context.object                       # the armature, with its action on
+start, end = map(int, arm.animation_data.action.frame_range)
+reference = sample_reference(arm, start, end, duration_frames=90)
+reference["skeleton"] = build_skeleton(arm)    # the clip's own rig (see "The skeleton")
+with open(bpy.path.abspath("//reference.json"), "w") as f:
+    json.dump(reference, f)
+```
+
+Notes:
+
+- It sends every bone. That suits a deform rig with one root bone (a
+  Mixamo or BVH import). A control rig (Rigify and the like) has
+  unparented control bones and several roots: send only its deform bones
+  (`bone.use_deform`), each parented to its nearest deform ancestor, as
+  the add-on does.
+- When you are generating *for* this same armature, you can drop
+  `reference["skeleton"]` and send `build_skeleton(arm)` as the request
+  `skeleton` instead.
+- `scene.frame_set` evaluates the whole scene; for long clips on heavy
+  scenes, sample only the stretch you need.
+
+## Other sources
+
+- **BVH.** A BVH hierarchy is already a skeleton in this sense:
+  `OFFSET` → `rest_translation` (BVH rest rotations are identity; convert
+  centimetres to metres and, if the file is Z-up, swap axes as above);
+  the `ROOT` joint's `Xposition Yposition Zposition` channels →
+  `root_positions`. Turn each joint's Euler channels into a quaternion in
+  the order the channels are listed (`Zrotation Xrotation Yrotation`
+  means `R = Rz · Rx · Ry`, angles in degrees), e.g. with
+  `scipy.spatial.transform.Rotation.from_euler("ZXY", angles, degrees=True).as_quat()`,
+  which returns `[x, y, z, w]`. The frame rate is `1 / Frame Time`.
+  End Sites carry no rotation: leave them out.
+- **FBX, glTF, USD.** Import into Blender (File → Import, or
+  `bpy.ops.import_scene.fbx(filepath=...)`), then sample it as in the
+  Blender example. Other DCCs work the same way: sample local rotations
+  from rest and the root's world position, and convert with the tables in
+  [Coordinate systems](../concepts/coordinates).
+
+## Building a `video_reference`
+
+A `video_reference` has no skeleton and no per-frame data: it is a video
+file, and the server does the reading. No server implements it yet, so
+this section covers what the protocol and the SDK check; what makes a
+reference work *well* will depend on the model that implements it.
+
+### The `video` object
+
+[`motionmcp.client.video_source`](../sdk/client#a-video-as-the-prompt-12)
+builds it, with the standard library alone:
+
+```python
+from motionmcp.client import video_source
+
+video_source(url="https://cdn.example.com/dance.mp4")
+# {"url": "https://cdn.example.com/dance.mp4"}
+
+video_source("dance.mov")
+# {"data": "AAAAFGZ0eXBxdCAg...", "media_type": "video/quicktime"}
+```
+
+| | `{"url": ...}` | `{"data": ..., "media_type": ...}` |
+|---|---|---|
+| What goes on the wire | the URL | the whole file, base64 |
+| Who fetches it | the server, over `https` | nobody: it is in the body |
+| Size checked by | the server, when it fetches | the SDK server, before the backbone sees it |
+| Good for | files already hosted, long videos | local files, private footage |
+
+A URL must be `https` and reachable by the server (a signed URL with an
+expiry works if it outlives the job). Inline data needs a `media_type`:
+`video/mp4` (`.mp4`, `.m4v`), `video/quicktime` (`.mov`) or `video/webm`
+(`.webm`); `video_source` takes it from the extension.
+
+### Size
+
+Inline video is limited twice:
+
+- **`limits.max_video_bytes`** caps the **file** (the decoded bytes).
+- **`limits.max_request_bytes`** caps the **whole body**, and base64 is
+  4/3 the size of the file: a 3 MB file is 4 MB of `data`.
+
+So the largest file you can send inline is about
+`min(max_video_bytes, 0.75 × max_request_bytes)` less the rest of the
+request. Check both in `/capabilities` before encoding:
+
+```python
+import os
+
+limits = model["limits"]
+size = os.path.getsize("dance.mp4")
+fits = (size <= limits.get("max_video_bytes", size)
+        and size * 4 / 3 + 50_000 < limits["max_request_bytes"])
+video = video_source("dance.mp4") if fits else video_source(url=upload("dance.mp4"))
+```
+
+(`upload` is yours: anything that gives back an `https` URL the server can
+fetch.) Trimming with `start_s` / `end_s` does not make an inline file any
+smaller; cut the file itself if it is too big.
+
+### Trimming, person, fps
+
+```json
+{ "type": "video_reference", "duration_frames": 120,
+  "video": { "url": "https://cdn.example.com/dance.mp4" },
+  "start_s": 2.0, "end_s": 6.0, "person": 1, "fps": 30 }
+```
+
+- **`start_s` / `end_s`** — the stretch of the video to read, in seconds
+  from its start (`0 ≤ start_s < end_s`). Either can be left out: from the
+  start, or to the end. When `end_s` is given, `end_s − (start_s or 0)`
+  must fit `limits.max_video_seconds`; an untrimmed video's length is
+  checked by the server once it has it.
+- **`person`** — which person to follow when there are several, as an
+  index into the server's own ordering of the people it detects. Left out,
+  the server follows the most prominent one. Since the ordering is the
+  server's, leave it out unless the model documents its ordering or the
+  video has one clear subject.
+- **`fps`** — a hint for the video's frame rate, for footage whose
+  container reports it wrongly (some screen recordings and re-encodes).
+  Normally leave it out.
+- **`duration_frames`** — as for every segment, the length of the
+  *output*, at the request's fps. A 4-second stretch of video can prompt
+  a 2-second or a 10-second segment.
+
+### A good reference video
+
+Until a model says otherwise, the safe choice is footage a person-tracker
+reads easily:
+
+- one person, or one who is clearly the most prominent,
+- the whole body in frame for the whole stretch (feet included),
+- a steady camera, and enough light,
+- the stretch trimmed to the motion you want, without lead-in.
+
+## Troubleshooting
+
+| What you see | Why | Fix |
+|---|---|---|
+| `400 unsupported_segment` | The model doesn't list the segment type in `supported_segments` | Check `/capabilities` first (`model_supported_segments(model)`); fall back to a `text` segment |
+| `422 schema_validation`, "root_positions must have one entry per frame" | `len(root_positions) != len(rotations)` | One root position per sampled frame |
+| `422 schema_validation`, "rotations[i] must have one quaternion per joint_names entry" | A frame has more or fewer rotations than `joint_names` | Sample every joint on every frame, in `joint_names` order |
+| `422 schema_validation` on `rotations` | A rotation isn't 4 numbers, T < 2, or `joint_names` has a duplicate | `[x, y, z, w]` per joint; at least 2 frames; unique names |
+| `400 unknown_joint` | A `joint_names` entry isn't a joint of the skeleton it refers to (the segment's `skeleton` if it has one, else the request's) | Send the clip's rig as the segment `skeleton`, or rename to the request skeleton's joints |
+| `400 invalid_request`, "must include the skeleton's root joint" | The root joint isn't in `joint_names` | Include it, with its world positions in `root_positions` |
+| `400 retargeting_unsupported` | A segment `skeleton` other than the canonical one, on a model without retargeting | Sample the clip onto the canonical skeleton, or use a model with `supports_retargeting` |
+| `400 invalid_options`, "max_reference_frames" | The clip has more frames than the model takes | Trim it, or thin it (every k-th frame, `fps / k`) |
+| `413 payload_too_large` | The body is over the server's `max_request_bytes`, or an inline video is over `max_video_bytes` | Round to fewer decimals, thin the clip or drop fingers; for video, send a `url` or a shorter file |
+| `400 invalid_options`, "max_video_seconds" | `end_s − (start_s or 0)` is longer than the model reads | Trim to a shorter stretch |
+| `422 schema_validation` on `video` | Both or neither of `url` / `data`, a non-`https` URL, bad base64, a missing or unknown `media_type`, or `start_s ≥ end_s` | Build the object with `video_source`; check the trim |
+| The motion looks mirrored, lying down, or twisted | Axes not converted, or rotations sent in the rig's own bone axes rather than from rest | Convert Z-up to Y-up for positions *and* rotations; send identity `rest_rotation` and rotations measured from rest |
+| The output drifts or pops where the clip is smooth | Quaternion sign flips between frames | Apply the `dot(q_prev, q) < 0 → −q` rule per joint |
