@@ -57,6 +57,8 @@ _SERVER_EXPORTS: dict[str, str] = {
     "TextSegment": ".schemas",
     "Timing": ".schemas",
     "UnconditionedSegment": ".schemas",
+    "VideoReferenceSegment": ".schemas",
+    "VideoSource": ".schemas",
     "build_app": ".server",
     "serve": ".server",
 }
@@ -86,6 +88,8 @@ __all__ = [
     "TextSegment",
     "Timing",
     "UnconditionedSegment",
+    "VideoReferenceSegment",
+    "VideoSource",
     "build_app",
     "serve",
 ]

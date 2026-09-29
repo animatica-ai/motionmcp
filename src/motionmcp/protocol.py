@@ -21,7 +21,8 @@ SUPPORTED_CONSTRAINTS = ["root_path", "effector_target", "pose_keyframe"]
 # it leave this default and the SDK rejects ``pose`` segments before they
 # reach the backbone. ``"motion_reference"`` (1.2) is optional the same way:
 # a backbone that can take a motion as a prompt lists it and sets
-# ``limits.max_reference_frames``.
+# ``limits.max_reference_frames``; so is ``"video_reference"`` (1.2), with
+# ``limits.max_video_bytes`` / ``limits.max_video_seconds``.
 SUPPORTED_SEGMENTS = ["text", "unconditioned"]
 
 SUPPORTED_GUIDANCE_TYPES = ["nocfg", "regular", "separated"]

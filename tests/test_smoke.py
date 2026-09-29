@@ -192,6 +192,18 @@ def test_schema_validation_bad_quat_length(client: TestClient) -> None:
     assert r.json()["error"]["code"] == "schema_validation"
 
 
+def test_schema_validation_from_a_model_validator_is_422(client: TestClient) -> None:
+    """A validator's own ValueError (here root_path's lengths) is a 422
+    envelope with its message, not a 500 from an unserialisable ctx."""
+    req = _request_for(client)
+    req["constraints"] = [{"type": "root_path", "frames": [0, 1], "positions_xz": [[0, 0]]}]
+    r = client.post("/generate", json=req)
+    assert r.status_code == 422
+    err = r.json()["error"]
+    assert err["code"] == "schema_validation"
+    assert "positions_xz must have length 2" in json.dumps(err["details"])
+
+
 def test_version_unsupported(client: TestClient) -> None:
     req = _request_for(client)
     req["protocol_version"] = "2.0"

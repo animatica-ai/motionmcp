@@ -45,6 +45,13 @@ class Limits(BaseModel):
     # ``max_duration_seconds``). Set it when ``supported_segments`` lists
     # ``"motion_reference"``; None = no cap.
     max_reference_frames: Optional[int] = Field(None, gt=0)
+    # A ``video_reference`` segment's video (1.2): most bytes of inline
+    # ``video.data`` (decoded), and most seconds of video to read when the
+    # request trims it (``end_s``). Set them when ``supported_segments`` lists
+    # ``"video_reference"``; the SDK enforces what it can see and the backbone
+    # the rest (a URL's size, an untrimmed video's length). None = no cap.
+    max_video_bytes: Optional[int] = Field(None, gt=0)
+    max_video_seconds: Optional[float] = Field(None, gt=0)
 
 
 class ModelSpec(BaseModel):
@@ -92,8 +99,10 @@ class ModelSpec(BaseModel):
     # "unconditioned" (every conforming server supports those). Backbones
     # with a specialized text-to-pose model add "pose", and ones that can
     # take a motion as a prompt add "motion_reference" (with
-    # ``limits.max_reference_frames``); the SDK rejects any segment whose
-    # type isn't listed here.
+    # ``limits.max_reference_frames``), a video as a prompt
+    # "video_reference" (with ``limits.max_video_bytes`` /
+    # ``max_video_seconds``); the SDK rejects any segment whose type isn't
+    # listed here.
     supported_segments: list[str] = Field(
         default_factory=lambda: list(SUPPORTED_SEGMENTS)
     )

@@ -13,6 +13,7 @@ Two entry points:
 from __future__ import annotations
 
 import inspect
+import json
 from contextlib import asynccontextmanager
 from typing import Iterable, Mapping
 
@@ -151,7 +152,9 @@ def build_app(
             raise ProtocolError(
                 "schema_validation",
                 "request fails schema validation",
-                details={"errors": exc.errors(include_url=False)},
+                # Via JSON: a validator's ValueError sits in errors()[i]["ctx"]
+                # and would not serialise (a 500 instead of this 422).
+                details={"errors": json.loads(exc.json(include_url=False))},
             ) from exc
         _check_version(req.protocol_version)
         return req
@@ -301,15 +304,22 @@ def _spec_json(spec: ModelSpec) -> dict:
     """One model's /capabilities entry. Every model served here takes a batch
     body and gets trajectories (the SDK provides both); a model that takes a
     ``motion_reference`` takes it as a prompt, mixed like text
-    (``supports_motion_reference_mixed``); a limit left unset
-    (``max_reference_frames``) is left out rather than sent as null."""
+    (``supports_motion_reference_mixed``); an optional limit left unset
+    (``max_reference_frames``, ``max_video_bytes``, ``max_video_seconds``) is
+    left out rather than sent as null."""
     update = {"supports_batch": True, "supports_trajectory": True}
     if "motion_reference" in spec.supported_segments:
         update["supports_motion_reference_mixed"] = True
     out = spec.model_copy(update=update).model_dump(mode="json")
-    if out.get("limits", {}).get("max_reference_frames") is None:
-        out.get("limits", {}).pop("max_reference_frames", None)
+    limits = out.get("limits", {})
+    for key in _OPTIONAL_LIMITS:
+        if limits.get(key) is None:
+            limits.pop(key, None)
     return out
+
+
+# Limits a model advertises only when it sets them (1.2 reference segments).
+_OPTIONAL_LIMITS = ("max_reference_frames", "max_video_bytes", "max_video_seconds")
 
 
 def _check_version(version: str) -> None:
@@ -404,10 +414,11 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
         if s.type not in spec.supported_segments:
             raise unsupported_segment(s.type, list(spec.supported_segments))
 
-    # A motion reference (1.2) is a prompt given as a motion: the rules below
-    # are the text segment's; this checks only its payload (joints on its
-    # skeleton, the clip's length against limits.max_reference_frames).
+    # A motion or video reference (1.2) is a prompt given as a motion or a
+    # video: the rules below are the text segment's; these check only the
+    # payload (a clip's joints and length, a video's size and trimmed length).
     _validate_motion_reference(req, spec)
+    _validate_video_reference(req, spec)
 
     # Looping: only where the backbone says it can, and over one segment.
     if req.options is not None and req.options.loop:
@@ -515,6 +526,34 @@ def _validate_one_reference(req: GenerateRequest, spec, ref, index: int) -> None
             details={"max_reference_frames": cap, "reference_frames": ref.reference_frames,
                      "segment": index},
         )
+
+
+def _validate_video_reference(req: GenerateRequest, spec) -> None:
+    """A video reference's payload against the model's limits, as far as the
+    SDK can see it: inline data's decoded size, and the trimmed length when
+    the request states one. A URL's size, an untrimmed video's length, the
+    person to follow are the backbone's to check once it has the video."""
+    max_bytes = spec.limits.max_video_bytes
+    max_seconds = spec.limits.max_video_seconds
+    for i, s in enumerate(req.segments):
+        if s.type != "video_reference":
+            continue
+        size = s.video.num_bytes
+        if max_bytes is not None and size is not None and size > max_bytes:
+            raise ProtocolError(
+                "payload_too_large",
+                f"video_reference video is {size} bytes; max_video_bytes is {max_bytes}",
+                details={"max_video_bytes": max_bytes, "video_bytes": size, "segment": i},
+            )
+        seconds = s.trimmed_seconds
+        if max_seconds is not None and seconds is not None and seconds > max_seconds:
+            raise ProtocolError(
+                "invalid_options",
+                f"video_reference reads {seconds:g}s of video; "
+                f"max_video_seconds is {max_seconds:g}",
+                details={"max_video_seconds": max_seconds, "video_seconds": seconds,
+                         "segment": i},
+            )
 
 
 # ---- Convenience runner ---------------------------------------------------

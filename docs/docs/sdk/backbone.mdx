@@ -158,6 +158,48 @@ for seg in req.segments:
 `/capabilities` advertises `supports_motion_reference_mixed: true` for such a
 model (a reference always mixes like text).
 
+### Video references (1.2)
+
+A [`video_reference`](../concepts/segments#videoreferencesegment--type-video_reference)
+segment is a prompt given as a video of a person. To take one, list it and
+cap the video:
+
+```python
+spec = ModelSpec(..., supported_segments=["text", "unconditioned", "video_reference"])
+spec.limits.max_video_bytes = 50_000_000     # decoded size of the video file
+spec.limits.max_video_seconds = 20.0         # seconds of video to read
+```
+
+The SDK validates it with the text segment's rules plus its payload: one
+source (an `https` `video.url`, or base64 `video.data` with a
+`media_type`), `0 ≤ start_s < end_s`, the inline data within
+`max_video_bytes` (`413 payload_too_large`) and a trimmed video within
+`max_video_seconds` (`400 invalid_options`). It never decodes the video;
+the rest is yours, once you have it: fetch the URL (and refuse one over
+`max_video_bytes`), check an untrimmed video's length, find the person to
+follow, and raise `invalid_request` when you can't:
+
+```python
+from motionmcp import ProtocolError
+
+for seg in req.segments:
+    if seg.type == "video_reference":
+        raw = seg.video.decoded() if seg.video.data else fetch(seg.video.url)
+        # seg.video.media_type (inline), seg.start_s / seg.end_s (seconds
+        # into the video, None = its start / end), seg.person (None = the
+        # most prominent person), seg.fps (a hint, or None)
+        track = track_person(raw, seg.start_s, seg.end_s, seg.person)
+        if track is None:
+            raise ProtocolError("invalid_request", "no person to follow in the video",
+                                details={"segment": req.segments.index(seg)})
+        caption = embed_track(track)      # video -> the text encoder's kind of vector
+    ...                                   # then the text path, as for a motion reference
+```
+
+`req.video_references` lists them in order (`req.video_reference` is the
+first). Keep `limits.max_request_bytes` above `max_video_bytes` × 4/3 if you
+take inline video: the body carries it as base64.
+
 ## `generate_batch(requests)`
 
 Optional. The SDK serves batch bodies for every backbone (and advertises

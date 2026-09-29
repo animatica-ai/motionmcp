@@ -7,9 +7,12 @@ Keep them in sync with that source of truth.
 
 from __future__ import annotations
 
+import base64
+import binascii
 from typing import Annotated, Literal, Optional, Union
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 
 # ---- Type aliases ---------------------------------------------------------
@@ -181,8 +184,124 @@ class MotionReferenceSegment(BaseModel):
         return len(self.rotations)
 
 
+# Container formats a ``video_reference`` may carry inline (``video.data``).
+VIDEO_MEDIA_TYPES = ("video/mp4", "video/quicktime", "video/webm")
+
+
+class VideoSource(BaseModel):
+    """Where a ``video_reference`` segment's video comes from (MMCP 1.2).
+
+    Exactly one of:
+
+    - ``{"url": "https://..."}`` -- the server fetches it. An ``https`` URL
+      with a host; the SDK cannot see how big it is, so a server that
+      advertises ``limits.max_video_bytes`` enforces that itself on the fetch.
+    - ``{"data": "<base64>", "media_type": "video/mp4"}`` -- the file inline,
+      standard base64 (RFC 4648, padded); ``media_type`` is one of
+      :data:`VIDEO_MEDIA_TYPES`. The SDK checks the base64 and the decoded
+      size (``num_bytes``) but never decodes the video itself.
+    """
+    model_config = ConfigDict(extra="forbid")
+    url: Optional[str] = Field(None, min_length=1, max_length=4096)
+    data: Optional[str] = Field(None, min_length=1)
+    media_type: Optional[Literal["video/mp4", "video/quicktime", "video/webm"]] = None
+    _num_bytes: Optional[int] = PrivateAttr(None)
+
+    @model_validator(mode="after")
+    def _one_source(self) -> "VideoSource":
+        if (self.url is None) == (self.data is None):
+            raise ValueError("video needs exactly one of `url` or `data`")
+        if self.url is not None:
+            if self.media_type is not None:
+                raise ValueError("`media_type` goes with `data`, not `url`")
+            parts = urlsplit(self.url)
+            if parts.scheme != "https" or not parts.hostname:
+                raise ValueError("video.url must be an https URL with a host")
+            return self
+        if self.media_type is None:
+            raise ValueError(
+                f"video.data needs a `media_type`, one of {list(VIDEO_MEDIA_TYPES)}")
+        try:
+            decoded = base64.b64decode(self.data, validate=True)
+        except (binascii.Error, ValueError):
+            raise ValueError("video.data must be standard base64") from None
+        if not decoded:
+            raise ValueError("video.data is empty")
+        self._num_bytes = len(decoded)
+        return self
+
+    @property
+    def num_bytes(self) -> Optional[int]:
+        """Decoded size of inline ``data`` in bytes; None for a ``url``."""
+        return self._num_bytes
+
+    def decoded(self) -> bytes:
+        """The inline video file's bytes (raises for a ``url`` source)."""
+        if self.data is None:
+            raise ValueError("a url video has no inline data; fetch video.url")
+        return base64.b64decode(self.data)
+
+
+class VideoReferenceSegment(BaseModel):
+    """A prompt given as a video instead of text (MMCP 1.2).
+
+    The client sends a video of a person moving -- by ``https`` URL or inline
+    as base64 (see :class:`VideoSource`) -- in place of a text prompt. The
+    model reads the person's motion in it as it would read a caption and makes
+    new motion of that kind, on the request skeleton. Like
+    :class:`MotionReferenceSegment` the segment **is a text segment** in
+    every other respect: it covers ``duration_frames`` of the take, takes a
+    per-segment ``seed``, mixes with any other segment type in any order, and
+    goes with constraints, ``options.loop``, ``num_samples`` and guidance
+    exactly as a text segment does; the SDK validates it with the same rules.
+
+    ``start_s`` / ``end_s`` (optional, seconds into the video, ``0 <= start_s
+    < end_s``) trim it to the stretch to read. ``person`` (optional, >= 0)
+    picks which person to follow, by the backbone's own ordering of the
+    people it detects; left out, the backbone follows the most prominent one.
+    ``fps`` (optional) is a hint for the video's frame rate, for containers
+    that report it badly; the video's length is independent of
+    ``duration_frames``.
+
+    A backbone receives the segment parsed and does the fetching / decoding
+    itself; the SDK never decodes video. Servers advertise support by
+    listing ``"video_reference"`` in ``supported_segments``;
+    ``limits.max_video_bytes`` caps the inline data's decoded size and
+    ``limits.max_video_seconds`` the trimmed length when the request states
+    it (``end_s``). Anything the SDK cannot see -- a URL's size, an untrimmed
+    video's length -- the server checks when it has the video.
+    """
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["video_reference"]
+    duration_frames: int = Field(..., gt=0)
+    video: VideoSource
+    start_s: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
+    end_s: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
+    person: Optional[int] = Field(None, ge=0)
+    fps: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
+    # See ``TextSegment.seed`` -- same per-segment override semantics.
+    seed: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _check_trim(self) -> "VideoReferenceSegment":
+        if self.start_s is not None and self.end_s is not None and not self.start_s < self.end_s:
+            raise ValueError(
+                f"start_s ({self.start_s}) must be before end_s ({self.end_s})")
+        return self
+
+    @property
+    def trimmed_seconds(self) -> Optional[float]:
+        """Seconds of video to read when the request states it (``end_s``
+        given): ``end_s - (start_s or 0)``; else None (the whole video, or
+        from ``start_s`` to its end -- a length only the server can know)."""
+        if self.end_s is None:
+            return None
+        return self.end_s - (self.start_s or 0.0)
+
+
 Segment = Annotated[
-    Union[TextSegment, UnconditionedSegment, PoseSegment, MotionReferenceSegment],
+    Union[TextSegment, UnconditionedSegment, PoseSegment, MotionReferenceSegment,
+          VideoReferenceSegment],
     Field(discriminator="type"),
 ]
 
@@ -338,6 +457,19 @@ class GenerateRequest(BaseModel):
     def motion_references(self) -> list[MotionReferenceSegment]:
         """Every ``motion_reference`` segment of the request, in order."""
         return [s for s in self.segments if isinstance(s, MotionReferenceSegment)]
+
+    @property
+    def video_reference(self) -> Optional[VideoReferenceSegment]:
+        """The request's first ``video_reference`` segment, or None."""
+        for s in self.segments:
+            if isinstance(s, VideoReferenceSegment):
+                return s
+        return None
+
+    @property
+    def video_references(self) -> list[VideoReferenceSegment]:
+        """Every ``video_reference`` segment of the request, in order."""
+        return [s for s in self.segments if isinstance(s, VideoReferenceSegment)]
 
     def fps(self, model_native_fps: float) -> float:
         """Effective fps for this request: ``timing.fps`` if set, else the model native."""

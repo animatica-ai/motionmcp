@@ -39,7 +39,9 @@ Each lands additively — clients on `v1.0` keep working.
 - **Round-trip motion editing** — sending an existing motion as input
   alongside constraints for refinement. *1.2 takes the first step:
   [`motion_reference`](../concepts/segments#motionreferencesegment--type-motion_reference)
-  sends a clip as the prompt and gets new motion of its kind back.*
+  sends a clip as the prompt and gets new motion of its kind back, and
+  [`video_reference`](../concepts/segments#videoreferencesegment--type-video_reference)
+  does the same from a video of a person.*
 - **Vendor extensions** — formal `extensions.<vendor>_*` blocks in the
   response, for backbones that want to surface metadata not yet in core.
 

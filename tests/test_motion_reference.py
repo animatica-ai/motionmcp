@@ -10,12 +10,15 @@ from __future__ import annotations
 import json
 
 import pytest
-from fastapi.testclient import TestClient
-from pydantic import ValidationError
 
-from motionmcp import GenerateRequest, ModelSpec, MotionReferenceSegment, build_app
-from motionmcp.schemas import TextSegment
-from motionmcp.null_backbone import NullBackbone
+pytest.importorskip("fastapi", reason="needs the [server] extras")
+
+from fastapi.testclient import TestClient  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
+
+from motionmcp import GenerateRequest, ModelSpec, MotionReferenceSegment, build_app  # noqa: E402
+from motionmcp.schemas import TextSegment  # noqa: E402
+from motionmcp.null_backbone import NullBackbone  # noqa: E402
 
 
 class ReferenceNull(NullBackbone):

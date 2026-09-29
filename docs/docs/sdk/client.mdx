@@ -168,6 +168,35 @@ doc = glb_to_gltf(open("motion.glb", "rb").read())
 
 See **[Response →](../reference/response)** for the document itself.
 
+### A video as the prompt (1.2)
+
+A [`video_reference`](../concepts/segments#videoreferencesegment--type-video_reference)
+segment carries its video by `https` URL or inline as base64.
+**`video_source(path=None, *, url=None, media_type=None)`** builds its
+`video` object from either, with the standard library alone (it reads and
+encodes the file; it never decodes the video):
+
+```python
+from motionmcp.client import video_source, model_supported_segments
+
+model = client.pick_model(caps)
+if "video_reference" in model_supported_segments(model):
+    video = video_source("dance.mov")    # {"data": "<base64>", "media_type": "video/quicktime"}
+    # or: video_source(url="https://cdn.example.com/dance.mp4") -> {"url": ...}
+    request_body["segments"] = [
+        {"type": "text", "prompt": "a person walks in", "duration_frames": 60},
+        {"type": "video_reference", "duration_frames": 120, "video": video,
+         "start_s": 2.0, "end_s": 6.0},
+    ]
+```
+
+The media type comes from the extension (`.mp4` / `.m4v`, `.mov`, `.webm`)
+unless `media_type` is passed; anything else raises `ValueError`, as does
+an `http://` URL or an empty file. Check `limits.max_video_bytes` before
+sending a file inline: a server refuses one over it with
+`413 payload_too_large`, and the whole body must still fit
+`limits.max_request_bytes` (base64 is a third bigger than the file).
+
 ## Errors
 
 Every transport or server-side failure raises `MmcpError` (a

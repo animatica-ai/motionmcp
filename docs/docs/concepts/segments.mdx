@@ -1,7 +1,7 @@
 ---
 id: segments
 title: Segments
-description: How to compose a motion request from text, unconditioned, pose and motion-reference spans.
+description: How to compose a motion request from text, unconditioned, pose, motion-reference and video-reference spans.
 sidebar_position: 2
 ---
 
@@ -12,10 +12,11 @@ compose into a clip — the request's total length is
 `sum(segments[].duration_frames)`. A single [`pose`](#posesegment--type-pose)
 segment is the one exception: it produces exactly one frame and can't be
 composed with others. A [`motion_reference`](#motionreferencesegment--type-motion_reference)
-segment (1.2) is a prompt given as a clip instead of words, and composes
-exactly like a `text` segment.
+segment (1.2) is a prompt given as a clip instead of words, and a
+[`video_reference`](#videoreferencesegment--type-video_reference) segment
+(1.2) one given as a video; both compose exactly like a `text` segment.
 
-Four segment types are defined in v1:
+Five segment types are defined in v1:
 
 ```json
 // Multi-segment clip
@@ -43,6 +44,12 @@ Four segment types are defined in v1:
     "rotations": [/* walk clip */], "root_positions": [/* … */], "fps": 30 },
   { "type": "motion_reference", "duration_frames": 60,  "joint_names": [/* … */],
     "rotations": [/* sit clip */],  "root_positions": [/* … */], "fps": 30 }
+]
+
+// A dance like the one in a video, seconds 2–6 of it (1.2)
+[
+  { "type": "video_reference", "duration_frames": 120,
+    "video": { "url": "https://cdn.example.com/dance.mp4" }, "start_s": 2, "end_s": 6 }
 ]
 ```
 
@@ -178,6 +185,86 @@ the usual glTF, exactly as for a text request.
 doesn't (`unsupported_segment`). `supports_motion_reference_mixed` is
 advertised as `true` for every such model (a reference mixes like text);
 it is kept for clients of the first 1.2 drafts.
+
+## VideoReferenceSegment — `type: "video_reference"`
+
+*Since 1.2.* A **prompt given as a video instead of words**: footage of a
+person moving — a phone clip, a reference from the web, a performance
+capture pass. The model reads the person's motion in it as it reads a
+caption and generates new motion *of that kind* on the request `skeleton`,
+not a copy of the footage. It is to video what
+[`motion_reference`](#motionreferencesegment--type-motion_reference) is to
+a clip, and in every other respect it **is a text segment**: it covers
+`duration_frames` of the take, takes a `seed`, and mixes with `text`,
+`unconditioned`, `motion_reference` and other video segments in any order;
+constraints, `options.loop`, `num_samples`, guidance and batching apply
+exactly as they do to text, and the SDK validates it with the text
+segment's rules.
+
+```json
+// The server fetches the video
+{
+  "type": "video_reference",
+  "duration_frames": 120,
+  "video": { "url": "https://cdn.example.com/dance.mp4" },
+  "start_s": 2.0,
+  "end_s": 6.0,
+  "person": 0
+}
+
+// The video inline
+{
+  "type": "video_reference",
+  "duration_frames": 90,
+  "video": { "data": "AAAAGGZ0eXBtcDQy…", "media_type": "video/mp4" },
+  "fps": 30
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `type` | `"video_reference"` | yes | Discriminator |
+| `duration_frames` | int (≥ 1) | yes | Output length, in frames at the request's effective fps, as for `text`. Independent of the video's length |
+| `video` | object, exactly one of the two forms below | yes | The video |
+| `video.url` | string, an `https` URL with a host | one of | The server fetches it. No other fields go with it |
+| `video.data` | string, standard base64 (RFC 4648, padded) | one of | The video file inline, non-empty |
+| `video.media_type` | `"video/mp4"` \| `"video/quicktime"` \| `"video/webm"` | with `data` | The container of `data` |
+| `start_s` | number (≥ 0) | no | Where to start reading, in seconds into the video. Default: the start |
+| `end_s` | number (> `start_s`) | no | Where to stop reading, in seconds into the video. Default: the end |
+| `person` | int (≥ 0) | no | Which person to follow, by the server's ordering of the people it detects. Default: the most prominent one |
+| `fps` | number (> 0) | no | A hint for the video's frame rate, for containers that report it badly |
+| `seed` | int | no | Per-segment seed, as [`TextSegment.seed`](#textsegment--type-text) |
+
+Unknown fields are rejected (`422`), in the segment and in `video`.
+
+The payload's own checks:
+
+- `video` has exactly one of `url` / `data`; a `url` is `https` with a host
+  and has no `media_type`; `data` is valid, non-empty base64 with one of
+  the three `media_type`s; `0 ≤ start_s < end_s`; `person ≥ 0`; `fps > 0`
+  → otherwise `422 schema_validation`.
+- Inline `data` whose decoded size is over `limits.max_video_bytes` (when
+  set) → `413 payload_too_large`, `details.segment` naming it. The whole
+  body must still fit `limits.max_request_bytes`; base64 is a third bigger
+  than the file.
+- `end_s − (start_s or 0)` over `limits.max_video_seconds` (when set) →
+  `400 invalid_options`. It caps the video read, not the output (that is
+  `max_duration_seconds`, as for text).
+- What the SDK cannot see, the server checks once it has the video: a
+  `url`'s size against `max_video_bytes`, an untrimmed video's length
+  against `max_video_seconds`, and whether the video can be fetched and
+  decoded and has the requested person in it (`400 invalid_request`).
+
+Everything else is the `text` segment's rule, unchanged. The response is
+the usual glTF, exactly as for a text request. The SDK never decodes video:
+a backbone receives the segment parsed (`VideoReferenceSegment`, with
+`video.decoded()` for inline data) and reads the video itself.
+
+`VideoReferenceSegment` is an **optional** capability: a model lists
+`"video_reference"` in `supported_segments` and SHOULD set
+`limits.max_video_bytes` and `limits.max_video_seconds`. The SDK rejects the
+segment for a model that doesn't list it (`unsupported_segment`). No server
+implements it yet.
 
 ## Composing
 
