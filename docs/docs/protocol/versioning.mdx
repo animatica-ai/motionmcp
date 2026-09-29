@@ -14,6 +14,28 @@ sidebar_position: 1
   fields with defaults, new response extension fields — bump the minor
   (`"1.1"`).
 
+## Changes by version
+
+- **1.2** — references as prompts, each composing exactly like a text
+  segment: the [`motion_reference`](../concepts/segments#motionreferencesegment--type-motion_reference)
+  segment (a clip as the prompt) with `limits.max_reference_frames`, and
+  the [`video_reference`](../concepts/segments#videoreferencesegment--type-video_reference)
+  segment (a video as the prompt, by `https` URL or inline base64) with
+  `limits.max_video_bytes` and `limits.max_video_seconds`; and the
+  `invalid_request` error code. Opt-in per type: servers advertise
+  `"motion_reference"` / `"video_reference"` in `supported_segments`
+  (`supports_motion_reference_mixed` is then always true for a motion
+  reference). A 1.0 client never sends either and sees no change; a
+  server that doesn't list a type keeps refusing it with
+  `unsupported_segment`. *Clarified* (1.0 meanings unchanged:
+  `rest_translation` / `rest_rotation` are parent-local, and
+  `fill_mode: "rest"` pins to `rest_rotation`): clients SHOULD send
+  identity `rest_rotation` on every joint, so parent frames are
+  world-aligned at rest and rotations read as "turned from rest"; a server
+  that cannot honour a non-identity `rest_rotation` MUST reject the
+  request with `400 invalid_skeleton` rather than ignore it. See
+  [Rest rotations](../concepts/skeleton#rest-rotations).
+
 ## Comparison
 
 Servers compare versions **numerically**, not lexicographically. So:

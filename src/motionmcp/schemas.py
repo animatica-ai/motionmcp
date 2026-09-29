@@ -7,9 +7,14 @@ Keep them in sync with that source of truth.
 
 from __future__ import annotations
 
+import base64
+import re
 from typing import Annotated, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic_core import PydanticCustomError
+
+from ._urls import check_video_url
 
 
 # ---- Type aliases ---------------------------------------------------------
@@ -17,6 +22,16 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 Vec2 = tuple[float, float]
 Vec3 = tuple[float, float, float]
 Quaternion = tuple[float, float, float, float]   # (x, y, z, w)
+
+# Finite floats only (no NaN / Infinity, which Python's JSON parser accepts).
+Finite = Annotated[float, Field(allow_inf_nan=False)]
+FiniteVec3 = tuple[Finite, Finite, Finite]
+FiniteQuaternion = tuple[Finite, Finite, Finite, Finite]
+
+
+def _invalid_skeleton(message: str) -> PydanticCustomError:
+    """A topology error, reported as ``400 invalid_skeleton`` (not 422)."""
+    return PydanticCustomError("invalid_skeleton", message)
 
 
 # ---- Skeleton -------------------------------------------------------------
@@ -40,21 +55,26 @@ class Skeleton(BaseModel):
     def _validate_topology(self) -> "Skeleton":
         names = [j.name for j in self.joints]
         if len(set(names)) != len(names):
-            raise ValueError("joint names must be unique within the skeleton")
+            raise _invalid_skeleton("joint names must be unique within the skeleton")
         roots = [j for j in self.joints if j.parent is None]
         if len(roots) != 1:
-            raise ValueError(
+            raise _invalid_skeleton(
                 f"exactly one joint must have parent=null; got {len(roots)}"
             )
         seen: set[str] = set()
         for j in self.joints:
             if j.parent is not None and j.parent not in seen:
-                raise ValueError(
+                raise _invalid_skeleton(
                     f"joint {j.name!r} references parent {j.parent!r} that is "
                     "not defined or appears later in the joints list"
                 )
             seen.add(j.name)
         return self
+
+    @property
+    def root(self) -> Joint:
+        """The joint with ``parent=None``."""
+        return next(j for j in self.joints if j.parent is None)
 
 
 # ---- Segments -------------------------------------------------------------
@@ -106,8 +126,204 @@ class PoseSegment(BaseModel):
         return 1
 
 
+class MotionReferenceSegment(BaseModel):
+    """A prompt given as a motion instead of text (MMCP 1.2).
+
+    The client sends a clip -- sampled from its own rig -- in place of a text
+    prompt. The model reads it as it would read a caption (a backbone turns the
+    clip into the same kind of conditioning vector its text encoder makes), so
+    the segment is a ``text`` segment in every other respect: it covers
+    ``duration_frames`` of the take, takes a per-segment ``seed``, mixes with
+    ``text`` / ``unconditioned`` / other reference segments in any order,
+    goes with constraints, ``options.loop``, ``num_samples`` and guidance
+    exactly as a text segment does, and the SDK validates it with the same
+    rules. What "a walk like this clip" produces is what the prompt "walk"
+    would: new performances of that kind of motion, not a copy of the clip.
+
+    ``rotations`` are local-to-parent quaternions ``(x, y, z, w)`` per frame,
+    one per ``joint_names`` entry, in the same convention as
+    ``pose_keyframe.joint_rotations``; ``root_positions`` are the root joint's
+    world position per frame (Y-up metres), as ``pose_keyframe.root_position``.
+    Quaternions are taken as sent, like ``pose_keyframe``: not required to be
+    exactly unit length; a backbone normalises them as it needs. Every number
+    must be finite. ``joint_names`` must include the skeleton's root joint
+    (checked by the SDK server: ``invalid_request``). ``fps`` is
+    the rate of the clip's samples, which may differ from the request's; the
+    clip's length is independent of ``duration_frames``.
+
+    ``skeleton`` (optional, same shape as ``GenerateRequest.skeleton``) is the
+    reference clip's own rig: when present, ``joint_names`` / ``rotations`` /
+    ``root_positions`` refer to it and the server retargets the clip from it,
+    so the clip can come from any rig; when absent they refer to the request
+    skeleton. Either way the output is on the request skeleton.
+
+    Servers advertise support by listing ``"motion_reference"`` in
+    ``supported_segments``; ``limits.max_reference_frames`` caps the clip's
+    own length, in frames as sent (the output length is capped like any
+    segment's, by ``max_duration_seconds``).
+    """
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["motion_reference"]
+    duration_frames: int = Field(..., gt=0)
+    skeleton: Optional[Skeleton] = None
+    joint_names: list[str] = Field(..., min_length=1)
+    rotations: list[list[FiniteQuaternion]] = Field(..., min_length=2)
+    root_positions: list[FiniteVec3] = Field(..., min_length=2)
+    fps: float = Field(..., gt=0, allow_inf_nan=False)
+    # See ``TextSegment.seed`` -- same per-segment override semantics.
+    seed: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _check_shapes(self) -> "MotionReferenceSegment":
+        if len(set(self.joint_names)) != len(self.joint_names):
+            raise ValueError("joint_names must be unique")
+        t = len(self.rotations)
+        if len(self.root_positions) != t:
+            raise ValueError(
+                f"root_positions must have one entry per frame ({t}), "
+                f"got {len(self.root_positions)}"
+            )
+        j = len(self.joint_names)
+        for i, frame in enumerate(self.rotations):
+            if len(frame) != j:
+                raise ValueError(
+                    f"rotations[{i}] must have one quaternion per joint_names "
+                    f"entry ({j}), got {len(frame)}"
+                )
+        return self
+
+    @property
+    def reference_frames(self) -> int:
+        """Frames in the reference clip (T)."""
+        return len(self.rotations)
+
+
+# Container formats a ``video_reference`` may carry inline (``video.data``).
+VIDEO_MEDIA_TYPES = ("video/mp4", "video/quicktime", "video/webm")
+
+# Standard base64 (RFC 4648 section 4), padded, no line breaks.
+_BASE64 = re.compile(r"[A-Za-z0-9+/]*={0,2}")
+
+
+def base64_decoded_size(data: str) -> int:
+    """Bytes that standard, padded base64 ``data`` decodes to, worked out from
+    its length and padding (no decoded copy). ValueError if it isn't such
+    base64 (another alphabet, line breaks, a length not a multiple of 4)."""
+    if len(data) % 4 or not _BASE64.fullmatch(data):
+        raise ValueError("video.data must be standard base64 (A-Z a-z 0-9 + /, "
+                         "padded with =, no line breaks)")
+    padding = (data[-2:] == "==") + (data[-1:] == "=")      # no copy of the payload
+    return len(data) // 4 * 3 - padding
+
+
+class VideoSource(BaseModel):
+    """Where a ``video_reference`` segment's video comes from (MMCP 1.2).
+
+    Exactly one of:
+
+    - ``{"url": "https://..."}`` -- the server fetches it. An ``https`` URL
+      with a host; the SDK cannot see how big it is, so a server that
+      advertises ``limits.max_video_bytes`` enforces that itself on the fetch.
+    - ``{"data": "<base64>", "media_type": "video/mp4"}`` -- the file inline,
+      standard base64 (RFC 4648, padded); ``media_type`` is one of
+      :data:`VIDEO_MEDIA_TYPES`. The SDK checks the base64 alphabet and
+      works out the decoded size (``num_bytes``) from its length, without
+      decoding; ``decoded()`` decodes it when a backbone wants the bytes.
+    """
+    model_config = ConfigDict(extra="forbid")
+    url: Optional[str] = Field(None, min_length=1)
+    data: Optional[str] = Field(None, min_length=1)
+    media_type: Optional[Literal["video/mp4", "video/quicktime", "video/webm"]] = None
+    _num_bytes: Optional[int] = PrivateAttr(None)
+
+    @model_validator(mode="after")
+    def _one_source(self) -> "VideoSource":
+        if (self.url is None) == (self.data is None):
+            raise ValueError("video needs exactly one of `url` or `data`")
+        if self.url is not None:
+            if self.media_type is not None:
+                raise ValueError("`media_type` goes with `data`, not `url`")
+            check_video_url(self.url)
+            return self
+        if self.media_type is None:
+            raise ValueError(
+                f"video.data needs a `media_type`, one of {list(VIDEO_MEDIA_TYPES)}")
+        size = base64_decoded_size(self.data)
+        if not size:
+            raise ValueError("video.data is empty")
+        self._num_bytes = size
+        return self
+
+    @property
+    def num_bytes(self) -> Optional[int]:
+        """Decoded size of inline ``data`` in bytes; None for a ``url``."""
+        return self._num_bytes
+
+    def decoded(self) -> bytes:
+        """The inline video file's bytes (raises for a ``url`` source)."""
+        if self.data is None:
+            raise ValueError("a url video has no inline data; fetch video.url")
+        return base64.b64decode(self.data, validate=True)
+
+
+class VideoReferenceSegment(BaseModel):
+    """A prompt given as a video instead of text (MMCP 1.2).
+
+    The client sends a video of a person moving -- by ``https`` URL or inline
+    as base64 (see :class:`VideoSource`) -- in place of a text prompt. The
+    model reads the person's motion in it as it would read a caption and makes
+    new motion of that kind, on the request skeleton. Like
+    :class:`MotionReferenceSegment` the segment **is a text segment** in
+    every other respect: it covers ``duration_frames`` of the take, takes a
+    per-segment ``seed``, mixes with any other segment type in any order, and
+    goes with constraints, ``options.loop``, ``num_samples`` and guidance
+    exactly as a text segment does; the SDK validates it with the same rules.
+
+    ``start_s`` / ``end_s`` (optional, seconds into the video, ``0 <= start_s
+    < end_s``) trim it to the stretch to read. The backbone follows the
+    most prominent person in the video (the largest, most visible one);
+    choosing among several people is not part of 1.2. ``fps`` (optional) is a hint for the video's frame rate, for containers
+    that report it badly; the video's length is independent of
+    ``duration_frames``.
+
+    A backbone receives the segment parsed and does the fetching / decoding
+    itself; the SDK never decodes video. Servers advertise support by
+    listing ``"video_reference"`` in ``supported_segments``;
+    ``limits.max_video_bytes`` caps the inline data's decoded size and
+    ``limits.max_video_seconds`` the trimmed length when the request states
+    it (``end_s``). Anything the SDK cannot see -- a URL's size, an untrimmed
+    video's length -- the server checks when it has the video.
+    """
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["video_reference"]
+    duration_frames: int = Field(..., gt=0)
+    video: VideoSource
+    start_s: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
+    end_s: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
+    fps: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
+    # See ``TextSegment.seed`` -- same per-segment override semantics.
+    seed: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _check_trim(self) -> "VideoReferenceSegment":
+        if self.start_s is not None and self.end_s is not None and not self.start_s < self.end_s:
+            raise ValueError(
+                f"start_s ({self.start_s}) must be before end_s ({self.end_s})")
+        return self
+
+    @property
+    def trimmed_seconds(self) -> Optional[float]:
+        """Seconds of video to read when the request states it (``end_s``
+        given): ``end_s - (start_s or 0)``; else None (the whole video, or
+        from ``start_s`` to its end -- a length only the server can know)."""
+        if self.end_s is None:
+            return None
+        return self.end_s - (self.start_s or 0.0)
+
+
 Segment = Annotated[
-    Union[TextSegment, UnconditionedSegment, PoseSegment],
+    Union[TextSegment, UnconditionedSegment, PoseSegment, MotionReferenceSegment,
+          VideoReferenceSegment],
     Field(discriminator="type"),
 ]
 
@@ -250,6 +466,32 @@ class GenerateRequest(BaseModel):
             return sum(s.duration_frames for s in self.segments)
         assert self.duration_frames is not None
         return self.duration_frames
+
+    @property
+    def motion_reference(self) -> Optional[MotionReferenceSegment]:
+        """The request's first ``motion_reference`` segment, or None."""
+        for s in self.segments:
+            if isinstance(s, MotionReferenceSegment):
+                return s
+        return None
+
+    @property
+    def motion_references(self) -> list[MotionReferenceSegment]:
+        """Every ``motion_reference`` segment of the request, in order."""
+        return [s for s in self.segments if isinstance(s, MotionReferenceSegment)]
+
+    @property
+    def video_reference(self) -> Optional[VideoReferenceSegment]:
+        """The request's first ``video_reference`` segment, or None."""
+        for s in self.segments:
+            if isinstance(s, VideoReferenceSegment):
+                return s
+        return None
+
+    @property
+    def video_references(self) -> list[VideoReferenceSegment]:
+        """Every ``video_reference`` segment of the request, in order."""
+        return [s for s in self.segments if isinstance(s, VideoReferenceSegment)]
 
     def fps(self, model_native_fps: float) -> float:
         """Effective fps for this request: ``timing.fps`` if set, else the model native."""

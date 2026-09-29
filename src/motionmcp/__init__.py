@@ -47,6 +47,7 @@ _SERVER_EXPORTS: dict[str, str] = {
     "GenerateRequest": ".schemas",
     "Guidance": ".schemas",
     "Joint": ".schemas",
+    "MotionReferenceSegment": ".schemas",
     "Options": ".schemas",
     "PoseKeyframeConstraint": ".schemas",
     "PoseSegment": ".schemas",
@@ -56,7 +57,10 @@ _SERVER_EXPORTS: dict[str, str] = {
     "TextSegment": ".schemas",
     "Timing": ".schemas",
     "UnconditionedSegment": ".schemas",
+    "VideoReferenceSegment": ".schemas",
+    "VideoSource": ".schemas",
     "build_app": ".server",
+    "fetch_video_url": ".fetch",
     "serve": ".server",
 }
 
@@ -69,6 +73,7 @@ __all__ = [
     "Guidance",
     "Joint",
     "ModelSpec",
+    "MotionReferenceSegment",
     "MotionResult",
     "Options",
     "PROTOCOL_VERSION",
@@ -84,7 +89,10 @@ __all__ = [
     "TextSegment",
     "Timing",
     "UnconditionedSegment",
+    "VideoReferenceSegment",
+    "VideoSource",
     "build_app",
+    "fetch_video_url",
     "serve",
 ]
 

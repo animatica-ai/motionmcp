@@ -42,9 +42,36 @@ skeleton.
 | `joints[].display_name` | string \| null | Optional human-readable name. Echoed in errors; ignored elsewhere |
 | `joints[].parent` | string \| null | Parent joint name. Exactly one joint MUST have `parent: null` (the root) |
 | `joints[].rest_translation` | `[x, y, z]` | Local-space, relative to parent. Meters |
-| `joints[].rest_rotation` | `[x, y, z, w]` | Local-space quaternion, relative to parent. glTF order |
+| `joints[].rest_rotation` | `[x, y, z, w]` | Local-space quaternion, relative to parent. glTF order. Clients SHOULD send identity; see [Rest rotations](#rest-rotations) |
 | `coordinate_system` | `"right_handed_y_up"` | Required value in v1 |
 | `units` | `"meters"` | Required value in v1 |
+
+## Rest rotations
+
+`rest_translation` and `rest_rotation` mean what they mean in glTF: the
+joint's rest transform in its parent's frame. Every rotation in a request
+(`pose_keyframe.joint_rotations`, `effector_target.rotations`,
+`motion_reference.rotations`) is a joint's local rotation in that same
+parent frame, so at rest it equals the joint's `rest_rotation`.
+
+*Clarified in 1.2:*
+
+- Clients SHOULD send `rest_rotation: [0, 0, 0, 1]` on every joint. Then
+  every parent frame at rest is aligned with the world axes: a
+  `rest_translation` is simply the joint's rest position minus its
+  parent's, a local rotation is the rotation the joint has turned through
+  since the rest pose (in world-aligned axes, relative to its parent's),
+  and `[0, 0, 0, 1]` means "as in the rest pose". A rig whose bones have
+  their own rest orientations is sent this way by folding those
+  orientations into the rotations (as the Blender example in the guide
+  does).
+- A server that cannot honour a non-identity `rest_rotation` MUST reject
+  the request with `400 invalid_skeleton` rather than ignore it. (Kimodo
+  takes identity rest rotations only, and says so with that error.)
+
+See
+**[Building reference segments →](../guides/reference-segments#the-data-a-motion_reference-carries)**
+for sampling rotations this way from a rig.
 
 ## Canonical vs custom
 

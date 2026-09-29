@@ -51,9 +51,12 @@ The server already raises these — you don't need to:
 | `version_unsupported` | `protocol_version` major doesn't match this server |
 | `retargeting_unsupported` | Custom skeleton sent to a `supports_retargeting=False` model |
 | `unsupported_constraint` | Constraint type isn't in `model.supported_constraints` |
+| `unsupported_segment` | Segment type isn't in `model.supported_segments` |
+| `invalid_request` | Parts of the request that are valid alone but can't go together (raised by backbones, e.g. a `motion_reference` clip without its skeleton's root joint, a `video_reference` video that can't be fetched or decoded or has no person in it) |
 | `unknown_joint` | Constraint references a joint name not in the skeleton |
 | `frame_out_of_range` | Constraint frame outside `[0, total_frames - 1]` |
-| `invalid_options` | num_samples / prompt length / duration / constraint count exceeds limits |
+| `invalid_options` | num_samples / prompt length / duration / constraint count / a `motion_reference` clip longer than `max_reference_frames` / a `video_reference` trimmed longer than `max_video_seconds` |
+| `payload_too_large` | a `video_reference`'s inline video over `max_video_bytes` (raise it yourself for a fetched `video.url` over it) |
 
 ## What you raise
 

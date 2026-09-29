@@ -27,7 +27,7 @@ def test_capabilities_shape(client: TestClient) -> None:
     r = client.get("/capabilities")
     assert r.status_code == 200
     body = r.json()
-    assert body["protocol_version"] == "1.0"
+    assert body["protocol_version"] == "1.2"
     assert body["coordinate_system"] == "right_handed_y_up"
     assert body["units"] == "meters"
     assert body["rotation_format"] == "quaternion_xyzw"
@@ -190,6 +190,18 @@ def test_schema_validation_bad_quat_length(client: TestClient) -> None:
     r = client.post("/generate", json=req)
     assert r.status_code == 422
     assert r.json()["error"]["code"] == "schema_validation"
+
+
+def test_schema_validation_from_a_model_validator_is_422(client: TestClient) -> None:
+    """A validator's own ValueError (here root_path's lengths) is a 422
+    envelope with its message, not a 500 from an unserialisable ctx."""
+    req = _request_for(client)
+    req["constraints"] = [{"type": "root_path", "frames": [0, 1], "positions_xz": [[0, 0]]}]
+    r = client.post("/generate", json=req)
+    assert r.status_code == 422
+    err = r.json()["error"]
+    assert err["code"] == "schema_validation"
+    assert "positions_xz must have length 2" in json.dumps(err["details"])
 
 
 def test_version_unsupported(client: TestClient) -> None:

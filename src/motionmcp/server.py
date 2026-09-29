@@ -13,6 +13,9 @@ Two entry points:
 from __future__ import annotations
 
 import inspect
+import json
+import re
+import typing
 from contextlib import asynccontextmanager
 from typing import Iterable, Mapping
 
@@ -41,7 +44,7 @@ from .protocol import (
     ROTATION_FORMAT,
     UNITS,
 )
-from .schemas import GenerateRequest
+from .schemas import GenerateRequest, Segment
 
 
 # ---- Backbone registry ----------------------------------------------------
@@ -138,24 +141,25 @@ def build_app(
             "response_formats":  RESPONSE_FORMATS,
             # Every model served here takes a batch body at POST /generate:
             # the SDK runs one item by item when the backbone cannot batch.
-            "models":            [b.capabilities().model_copy(update={"supports_batch": True,
-                                                                     "supports_trajectory": True})
-                                  .model_dump(mode="json")
-                                  for b in registry.values()],
+            "models":            [_spec_json(b.capabilities()) for b in registry.values()],
         }
 
     # ----- /generate ---------------------------------------------------------
 
     def _parse(payload) -> GenerateRequest:
-        """One generate request, schema- and version-checked."""
+        """One generate request, schema- and version-checked.
+
+        A protocol major this server doesn't speak is refused first; then
+        segment types the SDK knows but the named model doesn't take
+        (``unsupported_segment``), before their payload is parsed at all."""
+        version = payload.get("protocol_version") if isinstance(payload, dict) else None
+        if isinstance(version, str) and _VERSION.fullmatch(version):
+            _check_version(version)
+        _gate_segment_types(payload, registry)
         try:
             req = GenerateRequest.model_validate(payload)
         except ValidationError as exc:
-            raise ProtocolError(
-                "schema_validation",
-                "request fails schema validation",
-                details={"errors": exc.errors(include_url=False)},
-            ) from exc
+            raise _schema_error(exc) from exc
         _check_version(req.protocol_version)
         return req
 
@@ -200,15 +204,26 @@ def build_app(
             trajectories=trajectories,
         )
 
+    # The largest body any model here takes: the cap before the body is read
+    # (which model a request names is only known after parsing it).
+    def _body_cap() -> int:
+        return max((b.capabilities().limits.max_request_bytes for b in registry.values()),
+                   default=int(DEFAULT_LIMITS["max_request_bytes"]))
+
     @app.post("/generate")
     async def post_generate(request: Request) -> Response:
+        cap = _body_cap()
+        body = await _read_body(request, cap)
+        size = len(body)
         try:
-            payload = await request.json()
-        except Exception as exc:
+            payload = json.loads(body)
+        except (ValueError, RecursionError) as exc:
+            # RecursionError: nesting deeper than the parser goes.
             raise ProtocolError(
                 "schema_validation",
-                f"request body is not valid JSON: {exc}",
-            )
+                f"request body is not valid JSON: {type(exc).__name__}: {exc}"[:500],
+            ) from None
+        del body
 
         # A batch: several generate requests in one body (see _generate_batch).
         if isinstance(payload, dict) and "requests" in payload:
@@ -217,6 +232,8 @@ def build_app(
 
         req = _parse(payload)
         backbone, spec = _backbone_for(req)
+        if size > spec.limits.max_request_bytes:    # this model's own cap
+            raise payload_too_large(size, spec.limits.max_request_bytes)
         result = await _call_generate(backbone, req)
         return JSONResponse(
             content=_encode(req, spec, result),
@@ -262,6 +279,11 @@ def build_app(
                     raise ProtocolError("schema_validation", "each request must be an object")
                 req = _parse({"protocol_version": version, **raw})
                 _, spec = _backbone_for(req)
+                # Each item against its own model's cap (the body as a whole
+                # was checked against the largest one).
+                item_bytes = len(json.dumps(raw, separators=(",", ":")))
+                if item_bytes > spec.limits.max_request_bytes:
+                    raise payload_too_large(item_bytes, spec.limits.max_request_bytes)
             except ProtocolError as exc:
                 results[i] = exc.to_envelope()
                 continue
@@ -298,7 +320,101 @@ def build_app(
     return app
 
 
+# ---- Reading and parsing ---------------------------------------------------
+
+async def _read_body(request: Request, cap: int) -> bytes:
+    """The request body, refused with 413 as soon as it is known to exceed
+    ``cap`` bytes: from ``Content-Length`` before reading, else while
+    streaming (a body without one, or one that lies)."""
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            n = int(declared)
+        except ValueError:
+            raise ProtocolError("schema_validation", "invalid Content-Length") from None
+        if n > cap:
+            raise payload_too_large(n, cap)
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > cap:
+            raise payload_too_large(total, cap, streamed=True)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def payload_too_large(size: int, cap: int, streamed: bool = False) -> ProtocolError:
+    what = f"more than {cap}" if streamed else str(size)
+    return ProtocolError(
+        "payload_too_large",
+        f"request body is {what} bytes; max_request_bytes is {cap}",
+        details={"max_request_bytes": cap, **({} if streamed else {"request_bytes": size})},
+    )
+
+
+def _schema_error(exc: ValidationError) -> ProtocolError:
+    """A pydantic failure as the MMCP envelope: ``400 invalid_skeleton`` when
+    a skeleton's topology is wrong (the request's, or a segment's own), else
+    ``422 schema_validation``. Serialised via JSON (a validator's ValueError
+    in ``ctx`` would not serialise) and without the offending input, which
+    can be megabytes (a bad ``video.data``)."""
+    errors = json.loads(exc.json(include_url=False, include_input=False))
+    topology = [e for e in errors if e.get("type") == "invalid_skeleton"]
+    if topology:
+        return ProtocolError("invalid_skeleton", topology[0]["msg"],
+                             details={"errors": topology})
+    return ProtocolError("schema_validation", "request fails schema validation",
+                         details={"errors": errors})
+
+
+_VERSION = re.compile(r"\d+\.\d+")
+# Segment types the SDK's schema knows; any other type is a schema error.
+_KNOWN_SEGMENTS = frozenset(
+    typing.get_args(model.model_fields["type"].annotation)[0]
+    for model in typing.get_args(typing.get_args(Segment)[0]))
+
+
+def _gate_segment_types(payload, registry) -> None:
+    """Refuse a segment type the SDK knows but the named model doesn't list,
+    from the raw body, so an unsupported payload (a video, a clip) is never
+    parsed. A request this can't read (no such model, no segment list) and a
+    type the SDK doesn't know are left to the schema (422)."""
+    if not isinstance(payload, dict):
+        return
+    backbone = registry.get(payload.get("model")) if isinstance(payload.get("model"), str) else None
+    segments = payload.get("segments")
+    if backbone is None or not isinstance(segments, list):
+        return
+    supported = list(backbone.capabilities().supported_segments)
+    for s in segments:
+        t = s.get("type") if isinstance(s, dict) else None
+        if t in _KNOWN_SEGMENTS and t not in supported:
+            raise unsupported_segment(t, supported)
+
+
 # ---- Generic per-spec validation ------------------------------------------
+
+def _spec_json(spec: ModelSpec) -> dict:
+    """One model's /capabilities entry. Every model served here takes a batch
+    body and gets trajectories (the SDK provides both); a model that takes a
+    ``motion_reference`` takes it as a prompt, mixed like text
+    (``supports_motion_reference_mixed``); an optional limit left unset
+    (``max_reference_frames``, ``max_video_bytes``, ``max_video_seconds``) is
+    left out rather than sent as null."""
+    update = {"supports_batch": True, "supports_trajectory": True,
+              "supports_motion_reference_mixed": "motion_reference" in spec.supported_segments}
+    out = spec.model_copy(update=update).model_dump(mode="json")
+    limits = out.get("limits", {})
+    for key in _OPTIONAL_LIMITS:
+        if limits.get(key) is None:
+            limits.pop(key, None)
+    return out
+
+
+# Limits a model advertises only when it sets them (1.2 reference segments).
+_OPTIONAL_LIMITS = ("max_reference_frames", "max_video_bytes", "max_video_seconds")
+
 
 def _check_version(version: str) -> None:
     try:
@@ -392,6 +508,12 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
         if s.type not in spec.supported_segments:
             raise unsupported_segment(s.type, list(spec.supported_segments))
 
+    # A motion or video reference (1.2) is a prompt given as a motion or a
+    # video: the rules below are the text segment's; these check only the
+    # payload (a clip's joints and length, a video's size and trimmed length).
+    _validate_motion_reference(req, spec)
+    _validate_video_reference(req, spec)
+
     # Looping: only where the backbone says it can, and over one segment.
     if req.options is not None and req.options.loop:
         if not getattr(spec, "supports_loop", False):
@@ -465,6 +587,75 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
             f"total duration {duration_s:.2f}s exceeds "
             f"max_duration_seconds {spec.limits.max_duration_seconds}",
         )
+
+
+def _validate_motion_reference(req: GenerateRequest, spec) -> None:
+    """A reference's payload: everything else about it is a text segment's
+    (length, seed, mixing, loop, constraints), checked with the text rules."""
+    for i, ref in enumerate(req.segments):
+        if ref.type == "motion_reference":
+            _validate_one_reference(req, spec, ref, i)
+
+
+def _validate_one_reference(req: GenerateRequest, spec, ref, index: int) -> None:
+    # The clip's joints are its own skeleton's when it carries one (a clip from
+    # another rig, retargeted by the server), else the request skeleton's.
+    ref_skeleton = ref.skeleton if ref.skeleton is not None else req.skeleton
+    if ref.skeleton is not None and not spec.supports_retargeting:
+        canonical_names = [j.name for j in spec.canonical_skeleton.joints]
+        if [j.name for j in ref.skeleton.joints] != canonical_names:
+            raise retargeting_unsupported()
+    skeleton_joint_names = {j.name for j in ref_skeleton.joints}
+    where = ("motion_reference skeleton" if ref.skeleton is not None
+             else "request skeleton")
+    for j in ref.joint_names:
+        if j not in skeleton_joint_names:
+            raise unknown_joint(j, sorted(skeleton_joint_names), where)
+    # The clip places the rig by its root: without it there is nothing to place.
+    root = ref_skeleton.root.name
+    if root not in ref.joint_names:
+        raise ProtocolError(
+            "invalid_request",
+            f"motion_reference must include the {where}'s root joint {root!r}",
+            details={"root_joint": root, "segment": index},
+        )
+    cap = spec.limits.max_reference_frames
+    if cap is not None and ref.reference_frames > cap:
+        raise ProtocolError(
+            "invalid_options",
+            f"motion_reference clip has {ref.reference_frames} frames; "
+            f"max_reference_frames is {cap}",
+            details={"max_reference_frames": cap, "reference_frames": ref.reference_frames,
+                     "segment": index},
+        )
+
+
+def _validate_video_reference(req: GenerateRequest, spec) -> None:
+    """A video reference's payload against the model's limits, as far as the
+    SDK can see it: inline data's decoded size, and the trimmed length when
+    the request states one. A URL's size, an untrimmed video's length, finding a
+    person to follow are the backbone's to check once it has the video."""
+    max_bytes = spec.limits.max_video_bytes
+    max_seconds = spec.limits.max_video_seconds
+    for i, s in enumerate(req.segments):
+        if s.type != "video_reference":
+            continue
+        size = s.video.num_bytes
+        if max_bytes is not None and size is not None and size > max_bytes:
+            raise ProtocolError(
+                "payload_too_large",
+                f"video_reference video is {size} bytes; max_video_bytes is {max_bytes}",
+                details={"max_video_bytes": max_bytes, "video_bytes": size, "segment": i},
+            )
+        seconds = s.trimmed_seconds
+        if max_seconds is not None and seconds is not None and seconds > max_seconds:
+            raise ProtocolError(
+                "invalid_options",
+                f"video_reference reads {seconds:g}s of video; "
+                f"max_video_seconds is {max_seconds:g}",
+                details={"max_video_seconds": max_seconds, "video_seconds": seconds,
+                         "segment": i},
+            )
 
 
 # ---- Convenience runner ---------------------------------------------------

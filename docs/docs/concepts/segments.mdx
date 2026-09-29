@@ -1,7 +1,7 @@
 ---
 id: segments
 title: Segments
-description: How to compose a motion request from text, unconditioned, and pose spans.
+description: How to compose a motion request from text, unconditioned, pose, motion-reference and video-reference spans.
 sidebar_position: 2
 ---
 
@@ -11,9 +11,12 @@ A `Segment` describes one stretch of motion in time. Sequential segments
 compose into a clip — the request's total length is
 `sum(segments[].duration_frames)`. A single [`pose`](#posesegment--type-pose)
 segment is the one exception: it produces exactly one frame and can't be
-composed with others.
+composed with others. A [`motion_reference`](#motionreferencesegment--type-motion_reference)
+segment (1.2) is a prompt given as a clip instead of words, and a
+[`video_reference`](#videoreferencesegment--type-video_reference) segment
+(1.2) one given as a video; both compose exactly like a `text` segment.
 
-Three segment types are defined in v1:
+Five segment types are defined in v1:
 
 ```json
 // Multi-segment clip
@@ -27,13 +30,34 @@ Three segment types are defined in v1:
 [
   { "type": "pose", "prompt": "person waves hello with their right hand" }
 ]
+
+// Motion like a reference clip (1.2)
+[
+  { "type": "motion_reference", "duration_frames": 90, "joint_names": ["Hips", "Spine1"],
+    "rotations": [[[0, 0, 0, 1], [0, 0, 0, 1]], [[0, 0, 0, 1], [0, 0.01, 0, 1]]],
+    "root_positions": [[0, 0.95, 0], [0, 0.95, 0.03]], "fps": 30 }
+]
+
+// A walk like one clip, then a sit like another (1.2)
+[
+  { "type": "motion_reference", "duration_frames": 90,  "joint_names": [/* … */],
+    "rotations": [/* walk clip */], "root_positions": [/* … */], "fps": 30 },
+  { "type": "motion_reference", "duration_frames": 60,  "joint_names": [/* … */],
+    "rotations": [/* sit clip */],  "root_positions": [/* … */], "fps": 30 }
+]
+
+// A dance like the one in a video, seconds 2–6 of it (1.2)
+[
+  { "type": "video_reference", "duration_frames": 120,
+    "video": { "url": "https://cdn.example.com/dance.mp4" }, "start_s": 2, "end_s": 6 }
+]
 ```
 
 `Segment` is a **discriminated union** with `type` as the discriminator.
 Servers advertise which types they accept via
 `ModelSpec.supported_segments` in `/capabilities` — clients SHOULD
 check before sending a non-default type. Future minor versions MAY add
-types (e.g. `"audio"`, `"motion_reference"`) under the same key.
+types (e.g. `"audio"`) under the same key.
 
 ## TextSegment — `type: "text"`
 
@@ -95,6 +119,165 @@ by including `"pose"` in `ModelSpec.supported_segments`. The SDK
 rejects pose segments sent to a model that doesn't claim support, with
 the `unsupported_segment` error code. See
 **[Capabilities reference →](../reference/capabilities)**.
+
+## MotionReferenceSegment — `type: "motion_reference"`
+
+*Since 1.2.* A **prompt given as a motion instead of words**. The client
+sends a clip sampled from its own rig (a take, hand keys, mocap) where a
+text segment would carry its prompt; the model reads the clip the way it
+reads a caption — a backbone turns it into the same kind of conditioning
+vector its text encoder makes for a prompt — and generates new motion *of
+that kind*, not a copy of the clip. Apart from that, a reference segment
+**is a text segment**: it covers `duration_frames` of the take, takes a
+`seed`, and mixes with `text`, `unconditioned` and other reference segments
+in any order, stitched with the same transitions; constraints,
+`options.loop`, `num_samples`, guidance and batching apply exactly as they
+do to text, and the SDK validates it with the text segment's rules. The
+clip can come from **any rig**: send that rig as the segment's own
+`skeleton` and the server retargets the clip from it; the output is always
+on the request `skeleton`.
+
+```json
+{
+  "type": "motion_reference",
+  "duration_frames": 150,
+  "skeleton": { "joints": [ /* the clip's rig, optional */ ] },
+  "joint_names": ["Hips", "Spine1", "..."],
+  "rotations": [[[0, 0, 0, 1], "... one per joint"], "... one per frame"],
+  "root_positions": [[0, 0.95, 0], "... one per frame"],
+  "fps": 30
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `type` | `"motion_reference"` | yes | Discriminator |
+| `duration_frames` | int (≥ 1) | yes | Output length, in frames at the request's effective fps, as for `text`. Independent of the clip's length |
+| `skeleton` | [`Skeleton`](./skeleton), same schema as the request `skeleton` | no | The reference clip's own rig. When present, `joint_names`, `rotations` and `root_positions` refer to it and the server retargets the clip from it; when absent they refer to the request `skeleton` |
+| `joint_names` | string[] (unique, ≥ 1) | yes | Joints of the segment's `skeleton` if given, else of the request `skeleton`; named as in `pose_keyframe.joint_rotations` |
+| `rotations` | `[x, y, z, w][][]`, T × J | yes | Local-to-parent quaternions per frame, one per `joint_names` entry, in the same convention and order as `pose_keyframe.joint_rotations`. T ≥ 2, at most `limits.max_reference_frames` |
+| `root_positions` | `[x, y, z][]`, T | yes | The root joint's world position per frame, Y-up metres, as `pose_keyframe.root_position` |
+| `fps` | number (> 0) | yes | Frame rate of the clip's samples (may differ from the request's) |
+| `seed` | int | no | Per-segment seed, as [`TextSegment.seed`](#textsegment--type-text) |
+
+To build one from a rig (the conventions, sampling a clip in numpy or
+Blender, BVH and FBX, the size budget), see
+**[Building reference segments →](../guides/reference-segments)**.
+
+The payload's own checks:
+
+- `len(rotations) == len(root_positions) == T`, every frame has one
+  quaternion per `joint_names` entry, and T ≥ 2 → otherwise
+  `422 schema_validation`. Every number must be finite (no `NaN` /
+  `Infinity`). Quaternions are taken as sent (as for `pose_keyframe`): not
+  required to be exactly unit length.
+- Every `joint_names` entry must be a joint of the segment's `skeleton`
+  when it has one, else of the request `skeleton` → `unknown_joint`. The
+  clip must include that skeleton's root joint → `400 invalid_request`.
+- A segment `skeleton` with a bad topology (no root, several roots, a
+  parent listed after its child) → `400 invalid_skeleton`, as for the
+  request skeleton.
+- A segment `skeleton` other than the model's canonical skeleton needs a
+  model with `supports_retargeting` → otherwise `retargeting_unsupported`.
+- A clip longer than `limits.max_reference_frames` (when set) →
+  `400 invalid_options`. `limits.max_reference_frames` counts the clip's frames **as sent** (`len(rotations)`), whatever its `fps`: a server MUST accept a clip within it, and MUST NOT refuse one within it because of how it resamples the clip internally (it resamples or trims to fit its own window instead).
+
+Everything else is the `text` segment's rule, unchanged. The response is
+the usual glTF, exactly as for a text request.
+
+`MotionReferenceSegment` is an **optional** capability: a model lists
+`"motion_reference"` in `supported_segments` and SHOULD set
+`limits.max_reference_frames`. The SDK rejects the segment for a model that
+doesn't (`unsupported_segment`), before reading the segment's payload.
+`supports_motion_reference_mixed` is `true` exactly when a model lists
+`"motion_reference"` (a reference mixes like text).
+
+## VideoReferenceSegment — `type: "video_reference"`
+
+*Since 1.2.* A **prompt given as a video instead of words**: footage of a
+person moving — a phone clip, a reference from the web, a performance
+capture pass. The model reads the person's motion in it as it reads a
+caption and generates new motion *of that kind* on the request `skeleton`,
+not a copy of the footage. It is to video what
+[`motion_reference`](#motionreferencesegment--type-motion_reference) is to
+a clip, and in every other respect it **is a text segment**: it covers
+`duration_frames` of the take, takes a `seed`, and mixes with `text`,
+`unconditioned`, `motion_reference` and other video segments in any order;
+constraints, `options.loop`, `num_samples`, guidance and batching apply
+exactly as they do to text, and the SDK validates it with the text
+segment's rules.
+
+```json
+// The server fetches the video
+{
+  "type": "video_reference",
+  "duration_frames": 120,
+  "video": { "url": "https://cdn.example.com/dance.mp4" },
+  "start_s": 2.0,
+  "end_s": 6.0
+}
+
+// The video inline
+{
+  "type": "video_reference",
+  "duration_frames": 90,
+  "video": { "data": "AAAAGGZ0eXBtcDQy…", "media_type": "video/mp4" },
+  "fps": 30
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `type` | `"video_reference"` | yes | Discriminator |
+| `duration_frames` | int (≥ 1) | yes | Output length, in frames at the request's effective fps, as for `text`. Independent of the video's length |
+| `video` | object, exactly one of the two forms below | yes | The video |
+| `video.url` | string, an `https` URL with a host | one of | The server fetches it. No other fields go with it |
+| `video.data` | string, standard base64 (RFC 4648, padded) | one of | The video file inline, non-empty |
+| `video.media_type` | `"video/mp4"` \| `"video/quicktime"` \| `"video/webm"` | with `data` | The container of `data` |
+| `start_s` | number (≥ 0) | no | Where to start reading, in seconds into the video. Default: the start |
+| `end_s` | number (> `start_s`) | no | Where to stop reading, in seconds into the video. Default: the end |
+| `fps` | number (> 0) | no | A hint for the video's frame rate, for containers that report it badly |
+| `seed` | int | no | Per-segment seed, as [`TextSegment.seed`](#textsegment--type-text) |
+
+Unknown fields are rejected (`422`), in the segment and in `video`.
+
+**Which person.** The server follows the **most prominent person** in the
+video — the largest, most visible one over the stretch it reads. There is
+no field to pick another in 1.2; trim or crop the video so the person you
+want is the clear subject. (Choosing among several people may come in a
+later version; see the [roadmap](../protocol/roadmap).)
+
+To build one (inline or by URL, the size math, trimming),
+see **[Building reference segments →](../guides/reference-segments)**.
+
+The payload's own checks:
+
+- `video` has exactly one of `url` / `data`; a `url` is `https` with a host
+  and has no `media_type`; `data` is valid, non-empty base64 with one of
+  the three `media_type`s; `0 ≤ start_s < end_s`; `fps > 0`
+  → otherwise `422 schema_validation`.
+- Inline `data` whose decoded size is over `limits.max_video_bytes` (when
+  set) → `413 payload_too_large`, `details.segment` naming it. The whole
+  body must still fit `limits.max_request_bytes`; base64 is a third bigger
+  than the file.
+- `end_s − (start_s or 0)` over `limits.max_video_seconds` (when set) →
+  `400 invalid_options`. It caps the video read, not the output (that is
+  `max_duration_seconds`, as for text).
+- What the SDK cannot see, the server checks once it has the video: a
+  `url`'s size against `max_video_bytes`, an untrimmed video's length
+  against `max_video_seconds`, and whether the video can be fetched and
+  decoded and has a person in it (`400 invalid_request`).
+
+Everything else is the `text` segment's rule, unchanged. The response is
+the usual glTF, exactly as for a text request. The SDK never decodes video:
+a backbone receives the segment parsed (`VideoReferenceSegment`, with
+`video.decoded()` for inline data) and reads the video itself.
+
+`VideoReferenceSegment` is an **optional** capability: a model lists
+`"video_reference"` in `supported_segments` and SHOULD set
+`limits.max_video_bytes` and `limits.max_video_seconds`. The SDK rejects the
+segment for a model that doesn't list it (`unsupported_segment`). No server
+implements it yet.
 
 ## Composing
 

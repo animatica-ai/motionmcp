@@ -1,0 +1,133 @@
+{
+ "coordinate_system": "right_handed_y_up",
+ "models": [
+  {
+   "canonical_skeleton": {
+    "coordinate_system": "right_handed_y_up",
+    "joints": [
+     {
+      "display_name": null,
+      "name": "Hips",
+      "parent": null,
+      "rest_rotation": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ],
+      "rest_translation": [
+       0.0,
+       0.95,
+       0.0
+      ]
+     },
+     {
+      "display_name": null,
+      "name": "Spine",
+      "parent": "Hips",
+      "rest_rotation": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ],
+      "rest_translation": [
+       0.0,
+       0.5,
+       0.0
+      ]
+     },
+     {
+      "display_name": null,
+      "name": "Head",
+      "parent": "Spine",
+      "rest_rotation": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ],
+      "rest_translation": [
+       0.0,
+       0.3,
+       0.0
+      ]
+     },
+     {
+      "display_name": null,
+      "name": "LeftFoot",
+      "parent": "Hips",
+      "rest_rotation": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ],
+      "rest_translation": [
+       0.1,
+       -0.95,
+       0.0
+      ]
+     },
+     {
+      "display_name": null,
+      "name": "RightFoot",
+      "parent": "Hips",
+      "rest_rotation": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ],
+      "rest_translation": [
+       -0.1,
+       -0.95,
+       0.0
+      ]
+     }
+    ],
+    "units": "meters"
+   },
+   "chunking": "none",
+   "fps": 30.0,
+   "id": "null",
+   "limits": {
+    "max_batch_size": 16,
+    "max_constraints_per_request": 64,
+    "max_duration_seconds": 30.0,
+    "max_num_samples": 16,
+    "max_prompt_length": 1000,
+    "max_request_bytes": 1048576
+   },
+   "native_clip_seconds": 10.0,
+   "predicted_contact_joints": [],
+   "recommended_max_duration_seconds": 12.0,
+   "supported_constraints": [
+    "root_path",
+    "effector_target",
+    "pose_keyframe"
+   ],
+   "supported_guidance_types": [
+    "nocfg",
+    "regular",
+    "separated"
+   ],
+   "supported_segments": [
+    "text",
+    "unconditioned"
+   ],
+   "supports_async": false,
+   "supports_batch": true,
+   "supports_loop": false,
+   "supports_retargeting": false,
+   "supports_segment_seed": false,
+   "supports_trajectory": true
+  }
+ ],
+ "protocol_version": "1.0",
+ "response_formats": [
+  "gltf_2.0_json"
+ ],
+ "rotation_format": "quaternion_xyzw",
+ "units": "meters"
+}

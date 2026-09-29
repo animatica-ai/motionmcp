@@ -8,6 +8,8 @@ in are embedded in other applications and we do not own their site-packages.
 same plain glTF JSON document the JSON path returns.
 :mod:`motionmcp.client.gltf_parser` turns that glTF 2.0 document into plain
 arrays; numpy is its only dependency.
+:mod:`motionmcp.client.video` builds a ``video_reference`` segment's
+``video`` from a file or a URL.
 """
 
 from .glb import glb_to_gltf
@@ -25,6 +27,7 @@ from .http import (
     probe_server,
     retarget_state,
 )
+from .video import video_source
 
 __all__ = [
     "MmcpError",
@@ -41,5 +44,6 @@ __all__ = [
     "poll_job",
     "probe_server",
     "retarget_state",
+    "video_source",
     "xyzw_to_rotmat",
 ]

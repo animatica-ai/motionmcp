@@ -36,8 +36,17 @@ Each lands additively — clients on `v1.0` keep working.
 - **Sparse-keyframe responses** — bezier handles instead of dense
   linear channels, for clip sizes that scale with motion complexity
   rather than duration.
+- **Choosing a person in a video reference** — in 1.2 a
+  [`video_reference`](../concepts/segments#videoreferencesegment--type-video_reference)
+  always follows the most prominent person. A later version may let the
+  client choose among several, e.g. the server reports the people it found
+  and the client picks one by a box or a point.
 - **Round-trip motion editing** — sending an existing motion as input
-  alongside constraints for refinement.
+  alongside constraints for refinement. *1.2 takes the first step:
+  [`motion_reference`](../concepts/segments#motionreferencesegment--type-motion_reference)
+  sends a clip as the prompt and gets new motion of its kind back, and
+  [`video_reference`](../concepts/segments#videoreferencesegment--type-video_reference)
+  does the same from a video of a person.*
 - **Vendor extensions** — formal `extensions.<vendor>_*` blocks in the
   response, for backbones that want to surface metadata not yet in core.
 

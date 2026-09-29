@@ -17,7 +17,7 @@ from __future__ import annotations
 import abc
 import inspect
 from dataclasses import dataclass, field
-from typing import Awaitable, Sequence
+from typing import Awaitable, Optional, Sequence
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
@@ -40,6 +40,18 @@ class Limits(BaseModel):
     max_prompt_length: int = int(DEFAULT_LIMITS["max_prompt_length"])
     max_request_bytes: int = int(DEFAULT_LIMITS["max_request_bytes"])
     max_batch_size: int = int(DEFAULT_LIMITS["max_batch_size"])
+    # Most frames a ``motion_reference`` segment's clip may carry (the clip
+    # itself; its ``duration_frames`` is capped like any segment's, by
+    # ``max_duration_seconds``). Set it when ``supported_segments`` lists
+    # ``"motion_reference"``; None = no cap.
+    max_reference_frames: Optional[int] = Field(None, gt=0)
+    # A ``video_reference`` segment's video (1.2): most bytes of inline
+    # ``video.data`` (decoded), and most seconds of video to read when the
+    # request trims it (``end_s``). Set them when ``supported_segments`` lists
+    # ``"video_reference"``; the SDK enforces what it can see and the backbone
+    # the rest (a URL's size, an untrimmed video's length). None = no cap.
+    max_video_bytes: Optional[int] = Field(None, gt=0)
+    max_video_seconds: Optional[float] = Field(None, gt=0)
 
 
 class ModelSpec(BaseModel):
@@ -65,6 +77,12 @@ class ModelSpec(BaseModel):
     # should only set ``loop`` when this is advertised; the SDK rejects it
     # otherwise.
     supports_loop: bool = False
+    # ``motion_reference`` segments are prompts like text segments (MMCP 1.2):
+    # several in one request, mixed with ``text`` / ``unconditioned`` ones.
+    # Implied by ``"motion_reference"`` in ``supported_segments`` -- the SDK
+    # server advertises it as true for such a model, whatever is set here --
+    # and kept for clients that read it.
+    supports_motion_reference_mixed: bool = False
     # True when POST /generate accepts a batch body, ``{"requests": [...]}``,
     # of up to ``limits.max_batch_size`` generate requests. Advertised by the
     # SDK server for every model it serves (it can always run a batch item by
@@ -79,8 +97,12 @@ class ModelSpec(BaseModel):
     supported_constraints: list[str] = Field(default_factory=list)
     # Wire-format segment types this model accepts. Defaults to "text" and
     # "unconditioned" (every conforming server supports those). Backbones
-    # with a specialized text-to-pose model add "pose"; the SDK rejects
-    # any segment whose type isn't listed here.
+    # with a specialized text-to-pose model add "pose", and ones that can
+    # take a motion as a prompt add "motion_reference" (with
+    # ``limits.max_reference_frames``), a video as a prompt
+    # "video_reference" (with ``limits.max_video_bytes`` /
+    # ``max_video_seconds``); the SDK rejects any segment whose type isn't
+    # listed here.
     supported_segments: list[str] = Field(
         default_factory=lambda: list(SUPPORTED_SEGMENTS)
     )

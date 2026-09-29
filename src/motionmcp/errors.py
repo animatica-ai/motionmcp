@@ -26,6 +26,9 @@ STATUS_FOR: dict[str, int] = {
     "invalid_skeleton":            400,
     "frame_out_of_range":          400,
     "invalid_options":             400,
+    # 1.2: a request whose parts are individually valid but can't go together
+    # (e.g. a motion_reference clip without the root joint of its skeleton).
+    "invalid_request":             400,
     "version_unsupported":         400,
     "unauthorized":                401,
     "forbidden":                   403,
@@ -101,10 +104,11 @@ def unsupported_segment(
     )
 
 
-def unknown_joint(joint: str, skeleton_joints: list[str]) -> ProtocolError:
+def unknown_joint(joint: str, skeleton_joints: list[str],
+                  skeleton: str = "request skeleton") -> ProtocolError:
     return ProtocolError(
         "unknown_joint",
-        f"joint {joint!r} is not in the request skeleton",
+        f"joint {joint!r} is not in the {skeleton}",
         details={"skeleton_joints": skeleton_joints},
     )
 
