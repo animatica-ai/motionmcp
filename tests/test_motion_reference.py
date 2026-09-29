@@ -96,11 +96,9 @@ def test_duration_frames_is_required_as_for_text() -> None:
         TextSegment.model_validate({"type": "text", "prompt": "walk"})
 
 
-def test_fidelity_is_deprecated_accepted_as_zero_only() -> None:
-    seg = MotionReferenceSegment.model_validate(_segment(["a"], t=3, fidelity=0.0))
-    assert "fidelity" not in seg.model_dump(), "ignored: not passed on"
+def test_fidelity_is_gone() -> None:
     with pytest.raises(ValidationError):
-        MotionReferenceSegment.model_validate(_segment(["a"], t=3, fidelity=0.05))
+        MotionReferenceSegment.model_validate(_segment(["a"], t=3, fidelity=0.0))
 
 
 def test_non_unit_quaternions_are_taken_as_sent() -> None:
@@ -117,7 +115,11 @@ def test_non_unit_quaternions_are_taken_as_sent() -> None:
     {"rotations": [[[0, 0, 0, 1], [0, 0, 1]]] * 4},                   # not a quaternion
     {"joint_names": []},
     {"joint_names": ["a", "a"]},
-    {"fidelity": 0.05},
+    {"fidelity": 0.0},                                                # removed in 1.2
+    {"fps": float("nan")},
+    {"fps": float("inf")},
+    {"rotations": [[[0, 0, 0, float("nan")], [0, 0, 0, 1]]] * 4},
+    {"root_positions": [[0, float("inf"), 0]] * 4},
     {"duration_frames": 0},
     {"fps": 0},
     {"prompt": "walk"},                                               # extra field

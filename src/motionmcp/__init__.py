@@ -60,6 +60,7 @@ _SERVER_EXPORTS: dict[str, str] = {
     "VideoReferenceSegment": ".schemas",
     "VideoSource": ".schemas",
     "build_app": ".server",
+    "fetch_video_url": ".fetch",
     "serve": ".server",
 }
 
@@ -91,6 +92,7 @@ __all__ = [
     "VideoReferenceSegment",
     "VideoSource",
     "build_app",
+    "fetch_video_url",
     "serve",
 ]
 

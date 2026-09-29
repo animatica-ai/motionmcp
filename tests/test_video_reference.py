@@ -114,6 +114,10 @@ def test_every_media_type(media_type) -> None:
     assert VideoSource.model_validate(raw).media_type == media_type
 
 
+def test_url_scheme_is_case_insensitive() -> None:
+    assert VideoSource.model_validate({"url": "HTTPS://cdn.example.com:8443/a.mp4"}).url
+
+
 def test_trimmed_seconds_from_end_alone() -> None:
     assert VideoReferenceSegment.model_validate(_url_segment(end_s=3)).trimmed_seconds == 3
     assert VideoReferenceSegment.model_validate(_url_segment(start_s=3)).trimmed_seconds is None
@@ -139,6 +143,13 @@ def test_duration_frames_is_required_as_for_text() -> None:
     {"url": "https:///walk.mp4"},                                    # no host
     {"url": "walk.mp4"},
     {"url": ""},
+    {"url": "https://user:pw@cdn.example.com/walk.mp4"},             # user info
+    {"url": "https://cdn.example.com/walk .mp4"},                    # whitespace
+    {"url": "https://cdn.example.com/walk.mp4\r\nX: y"},            # control chars
+    {"url": "https://cdn.example.com:99999/walk.mp4"},               # invalid port
+    {"url": "https://cdn.example.com:0/walk.mp4"},
+    {"url": "https://cdn.example.com:x/walk.mp4"},
+    {"url": "https://cdn.example.com/" + "a" * 5000},                # too long
     {"url": _URL, "media_type": "video/mp4"},                        # media_type with url
     {"data": _DATA},                                                 # no media_type
     {"data": _DATA, "media_type": "video/avi"},                      # not a listed type

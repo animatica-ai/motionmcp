@@ -8,11 +8,13 @@ Keep them in sync with that source of truth.
 from __future__ import annotations
 
 import base64
-import binascii
+import re
 from typing import Annotated, Literal, Optional, Union
-from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic_core import PydanticCustomError
+
+from ._urls import check_video_url
 
 
 # ---- Type aliases ---------------------------------------------------------
@@ -20,6 +22,16 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 Vec2 = tuple[float, float]
 Vec3 = tuple[float, float, float]
 Quaternion = tuple[float, float, float, float]   # (x, y, z, w)
+
+# Finite floats only (no NaN / Infinity, which Python's JSON parser accepts).
+Finite = Annotated[float, Field(allow_inf_nan=False)]
+FiniteVec3 = tuple[Finite, Finite, Finite]
+FiniteQuaternion = tuple[Finite, Finite, Finite, Finite]
+
+
+def _invalid_skeleton(message: str) -> PydanticCustomError:
+    """A topology error, reported as ``400 invalid_skeleton`` (not 422)."""
+    return PydanticCustomError("invalid_skeleton", message)
 
 
 # ---- Skeleton -------------------------------------------------------------
@@ -43,21 +55,26 @@ class Skeleton(BaseModel):
     def _validate_topology(self) -> "Skeleton":
         names = [j.name for j in self.joints]
         if len(set(names)) != len(names):
-            raise ValueError("joint names must be unique within the skeleton")
+            raise _invalid_skeleton("joint names must be unique within the skeleton")
         roots = [j for j in self.joints if j.parent is None]
         if len(roots) != 1:
-            raise ValueError(
+            raise _invalid_skeleton(
                 f"exactly one joint must have parent=null; got {len(roots)}"
             )
         seen: set[str] = set()
         for j in self.joints:
             if j.parent is not None and j.parent not in seen:
-                raise ValueError(
+                raise _invalid_skeleton(
                     f"joint {j.name!r} references parent {j.parent!r} that is "
                     "not defined or appears later in the joints list"
                 )
             seen.add(j.name)
         return self
+
+    @property
+    def root(self) -> Joint:
+        """The joint with ``parent=None``."""
+        return next(j for j in self.joints if j.parent is None)
 
 
 # ---- Segments -------------------------------------------------------------
@@ -128,7 +145,9 @@ class MotionReferenceSegment(BaseModel):
     ``pose_keyframe.joint_rotations``; ``root_positions`` are the root joint's
     world position per frame (Y-up metres), as ``pose_keyframe.root_position``.
     Quaternions are taken as sent, like ``pose_keyframe``: not required to be
-    exactly unit length; a backbone normalises them as it needs. ``fps`` is
+    exactly unit length; a backbone normalises them as it needs. Every number
+    must be finite. ``joint_names`` must include the skeleton's root joint
+    (checked by the SDK server: ``invalid_request``). ``fps`` is
     the rate of the clip's samples, which may differ from the request's; the
     clip's length is independent of ``duration_frames``.
 
@@ -140,22 +159,17 @@ class MotionReferenceSegment(BaseModel):
 
     Servers advertise support by listing ``"motion_reference"`` in
     ``supported_segments``; ``limits.max_reference_frames`` caps the clip's
-    own length (the output length is capped like any segment's, by
-    ``max_duration_seconds``).
-
-    ``fidelity`` is deprecated and ignored: it is accepted only as ``0`` so
-    clients written against the first 1.2 drafts keep working.
+    own length, in frames as sent (the output length is capped like any
+    segment's, by ``max_duration_seconds``).
     """
     model_config = ConfigDict(extra="forbid")
     type: Literal["motion_reference"]
     duration_frames: int = Field(..., gt=0)
     skeleton: Optional[Skeleton] = None
     joint_names: list[str] = Field(..., min_length=1)
-    rotations: list[list[Quaternion]] = Field(..., min_length=2)
-    root_positions: list[Vec3] = Field(..., min_length=2)
-    fps: float = Field(..., gt=0)
-    # Deprecated (first 1.2 drafts): accepted as 0 only, ignored.
-    fidelity: float = Field(0.0, ge=0.0, le=0.0, exclude=True)
+    rotations: list[list[FiniteQuaternion]] = Field(..., min_length=2)
+    root_positions: list[FiniteVec3] = Field(..., min_length=2)
+    fps: float = Field(..., gt=0, allow_inf_nan=False)
     # See ``TextSegment.seed`` -- same per-segment override semantics.
     seed: Optional[int] = None
 
@@ -187,6 +201,20 @@ class MotionReferenceSegment(BaseModel):
 # Container formats a ``video_reference`` may carry inline (``video.data``).
 VIDEO_MEDIA_TYPES = ("video/mp4", "video/quicktime", "video/webm")
 
+# Standard base64 (RFC 4648 section 4), padded, no line breaks.
+_BASE64 = re.compile(r"[A-Za-z0-9+/]*={0,2}")
+
+
+def base64_decoded_size(data: str) -> int:
+    """Bytes that standard, padded base64 ``data`` decodes to, worked out from
+    its length and padding (no decoded copy). ValueError if it isn't such
+    base64 (another alphabet, line breaks, a length not a multiple of 4)."""
+    if len(data) % 4 or not _BASE64.fullmatch(data):
+        raise ValueError("video.data must be standard base64 (A-Z a-z 0-9 + /, "
+                         "padded with =, no line breaks)")
+    padding = len(data) - len(data.rstrip("="))
+    return len(data) // 4 * 3 - padding
+
 
 class VideoSource(BaseModel):
     """Where a ``video_reference`` segment's video comes from (MMCP 1.2).
@@ -198,11 +226,12 @@ class VideoSource(BaseModel):
       advertises ``limits.max_video_bytes`` enforces that itself on the fetch.
     - ``{"data": "<base64>", "media_type": "video/mp4"}`` -- the file inline,
       standard base64 (RFC 4648, padded); ``media_type`` is one of
-      :data:`VIDEO_MEDIA_TYPES`. The SDK checks the base64 and the decoded
-      size (``num_bytes``) but never decodes the video itself.
+      :data:`VIDEO_MEDIA_TYPES`. The SDK checks the base64 alphabet and
+      works out the decoded size (``num_bytes``) from its length, without
+      decoding; ``decoded()`` decodes it when a backbone wants the bytes.
     """
     model_config = ConfigDict(extra="forbid")
-    url: Optional[str] = Field(None, min_length=1, max_length=4096)
+    url: Optional[str] = Field(None, min_length=1)
     data: Optional[str] = Field(None, min_length=1)
     media_type: Optional[Literal["video/mp4", "video/quicktime", "video/webm"]] = None
     _num_bytes: Optional[int] = PrivateAttr(None)
@@ -214,20 +243,15 @@ class VideoSource(BaseModel):
         if self.url is not None:
             if self.media_type is not None:
                 raise ValueError("`media_type` goes with `data`, not `url`")
-            parts = urlsplit(self.url)
-            if parts.scheme != "https" or not parts.hostname:
-                raise ValueError("video.url must be an https URL with a host")
+            check_video_url(self.url)
             return self
         if self.media_type is None:
             raise ValueError(
                 f"video.data needs a `media_type`, one of {list(VIDEO_MEDIA_TYPES)}")
-        try:
-            decoded = base64.b64decode(self.data, validate=True)
-        except (binascii.Error, ValueError):
-            raise ValueError("video.data must be standard base64") from None
-        if not decoded:
+        size = base64_decoded_size(self.data)
+        if not size:
             raise ValueError("video.data is empty")
-        self._num_bytes = len(decoded)
+        self._num_bytes = size
         return self
 
     @property
@@ -239,7 +263,7 @@ class VideoSource(BaseModel):
         """The inline video file's bytes (raises for a ``url`` source)."""
         if self.data is None:
             raise ValueError("a url video has no inline data; fetch video.url")
-        return base64.b64decode(self.data)
+        return base64.b64decode(self.data, validate=True)
 
 
 class VideoReferenceSegment(BaseModel):

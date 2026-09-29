@@ -136,9 +136,12 @@ spec.limits.max_reference_frames = 300
 The SDK validates a reference with the text segment's rules (it has a
 `duration_frames` and a `seed`, mixes with other segments, goes with loop,
 constraints and guidance as text does) plus its payload: joints on its own
-`skeleton` (or the request skeleton when it has none), the clip no longer
-than `max_reference_frames`. It reaches you as parsed, not resampled or
-retargeted. Treat it as a text segment whose caption embedding comes from
+`skeleton` (or the request skeleton when it has none), the root joint
+among them, finite numbers, the clip no longer than
+`max_reference_frames` frames as sent. It reaches you as parsed, not
+resampled or retargeted. A clip within `max_reference_frames` MUST be
+accepted at any `fps`: if resampling it to your model's rate gives more
+frames than your window, resample it to fit (or trim it), don't refuse it. Treat it as a text segment whose caption embedding comes from
 the clip instead of the text encoder, and run everything else — lengths,
 seeds, guidance defaults, transitions, loop, batching — through your text
 path unchanged:
@@ -156,7 +159,10 @@ for seg in req.segments:
 ```
 
 `/capabilities` advertises `supports_motion_reference_mixed: true` for such a
-model (a reference always mixes like text). What clients send — rotations
+model and `false` for any other (a reference always mixes like text). If
+your model can't take a non-identity `rest_rotation` (on the request
+skeleton or a segment's), raise `400 invalid_skeleton` for it rather than
+ignoring it. What clients send — rotations
 from rest with identity `rest_rotation`, the root's world position, any
 rig's own skeleton — is in **[Building reference segments →](../guides/reference-segments)**.
 
@@ -177,17 +183,35 @@ source (an `https` `video.url`, or base64 `video.data` with a
 `media_type`), `0 ≤ start_s < end_s`, the inline data within
 `max_video_bytes` (`413 payload_too_large`) and a trimmed video within
 `max_video_seconds` (`400 invalid_options`). It never decodes the video;
-the rest is yours, once you have it: fetch the URL (and refuse one over
-`max_video_bytes`), check an untrimmed video's length, find the most
-prominent person (the largest, most visible one) to follow, and raise
-`invalid_request` when you can't:
+the rest is yours, once you have it: fetch the URL, check an untrimmed
+video's length, find the most prominent person (the largest, most visible
+one) to follow, and raise `invalid_request` when you can't.
+
+**Fetching a URL safely.** A `video.url` comes from the client, so
+fetching it makes your server an SSRF target (its loopback, its cloud
+metadata endpoint, its private network). A backbone that fetches one MUST:
+
+- fetch `https` only, with the URL rule the schema applies (a host, no
+  `user:pw@`, no whitespace or control characters, a valid port);
+- resolve the host and refuse it if **any** address is loopback, private,
+  link-local (which covers `169.254.169.254`), carrier-grade NAT,
+  multicast, reserved or unspecified, then connect to the address it
+  checked (so a second DNS answer can't swap it);
+- follow redirects by hand, a few at most, checking every hop the same way;
+- stream the body and stop past `limits.max_video_bytes`
+  (`413 payload_too_large`), and bound the whole fetch with a timeout.
+
+`motionmcp.fetch_video_url(url, max_bytes=..., timeout=30.0)` does all of
+this with the standard library, raising `ProtocolError`s you can let
+propagate (`invalid_request`, `payload_too_large`, `timeout`):
 
 ```python
-from motionmcp import ProtocolError
+from motionmcp import ProtocolError, fetch_video_url
 
 for seg in req.segments:
     if seg.type == "video_reference":
-        raw = seg.video.decoded() if seg.video.data else fetch(seg.video.url)
+        raw = (seg.video.decoded() if seg.video.data else
+               fetch_video_url(seg.video.url, max_bytes=self.capabilities().limits.max_video_bytes))
         # seg.video.media_type (inline), seg.start_s / seg.end_s (seconds
         # into the video, None = its start / end), seg.fps (a hint, or None)
         track = track_most_prominent_person(raw, seg.start_s, seg.end_s)
@@ -199,8 +223,12 @@ for seg in req.segments:
 ```
 
 `req.video_references` lists them in order (`req.video_reference` is the
-first). Keep `limits.max_request_bytes` above `max_video_bytes` × 4/3 if you
-take inline video: the body carries it as base64.
+first). `seg.video.num_bytes` is the inline file's size, worked out from
+the base64's length (the SDK checks the alphabet but doesn't decode it);
+`seg.video.decoded()` decodes it. Keep `limits.max_request_bytes` above
+`max_video_bytes` × 4/3 if you take inline video: the body carries it as
+base64, and the SDK server refuses a body over `max_request_bytes` before
+parsing it.
 
 ## `generate_batch(requests)`
 

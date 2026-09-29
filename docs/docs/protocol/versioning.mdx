@@ -27,11 +27,13 @@ sidebar_position: 1
   (`supports_motion_reference_mixed` is then always true for a motion
   reference). A 1.0 client never sends either and sees no change; a
   server that doesn't list a type keeps refusing it with
-  `unsupported_segment`. *Clarified:* clients SHOULD send identity
-  `rest_rotation` on every joint and express the rest orientation in the
-  rotations (local rotations measured from rest, in world-aligned
-  frames); a server MAY ignore `rest_rotation`, and `fill_mode: "rest"`
-  pins unspecified joints to identity (the rest pose). See
+  `unsupported_segment`. *Clarified* (1.0 meanings unchanged:
+  `rest_translation` / `rest_rotation` are parent-local, and
+  `fill_mode: "rest"` pins to `rest_rotation`): clients SHOULD send
+  identity `rest_rotation` on every joint, so parent frames are
+  world-aligned at rest and rotations read as "turned from rest"; a server
+  that cannot honour a non-identity `rest_rotation` MUST reject the
+  request with `400 invalid_skeleton` rather than ignore it. See
   [Rest rotations](../concepts/skeleton#rest-rotations).
 
 ## Comparison

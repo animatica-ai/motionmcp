@@ -159,7 +159,6 @@ on the request `skeleton`.
 | `root_positions` | `[x, y, z][]`, T | yes | The root joint's world position per frame, Y-up metres, as `pose_keyframe.root_position` |
 | `fps` | number (> 0) | yes | Frame rate of the clip's samples (may differ from the request's) |
 | `seed` | int | no | Per-segment seed, as [`TextSegment.seed`](#textsegment--type-text) |
-| `fidelity` | `0` | no | *Deprecated*, from the first 1.2 drafts: accepted as `0` only, and ignored |
 
 To build one from a rig (the conventions, sampling a clip in numpy or
 Blender, BVH and FBX, the size budget), see
@@ -169,16 +168,19 @@ The payload's own checks:
 
 - `len(rotations) == len(root_positions) == T`, every frame has one
   quaternion per `joint_names` entry, and T ≥ 2 → otherwise
-  `422 schema_validation`. Quaternions are taken as sent (as for
-  `pose_keyframe`): not required to be exactly unit length.
+  `422 schema_validation`. Every number must be finite (no `NaN` /
+  `Infinity`). Quaternions are taken as sent (as for `pose_keyframe`): not
+  required to be exactly unit length.
 - Every `joint_names` entry must be a joint of the segment's `skeleton`
   when it has one, else of the request `skeleton` → `unknown_joint`. The
-  clip must include that skeleton's root joint (`400 invalid_request`,
-  from the server).
+  clip must include that skeleton's root joint → `400 invalid_request`.
+- A segment `skeleton` with a bad topology (no root, several roots, a
+  parent listed after its child) → `400 invalid_skeleton`, as for the
+  request skeleton.
 - A segment `skeleton` other than the model's canonical skeleton needs a
   model with `supports_retargeting` → otherwise `retargeting_unsupported`.
 - A clip longer than `limits.max_reference_frames` (when set) →
-  `400 invalid_options`.
+  `400 invalid_options`. `limits.max_reference_frames` counts the clip's frames **as sent** (`len(rotations)`), whatever its `fps`: a server MUST accept a clip within it, and MUST NOT refuse one within it because of how it resamples the clip internally (it resamples or trims to fit its own window instead).
 
 Everything else is the `text` segment's rule, unchanged. The response is
 the usual glTF, exactly as for a text request.
@@ -186,9 +188,9 @@ the usual glTF, exactly as for a text request.
 `MotionReferenceSegment` is an **optional** capability: a model lists
 `"motion_reference"` in `supported_segments` and SHOULD set
 `limits.max_reference_frames`. The SDK rejects the segment for a model that
-doesn't (`unsupported_segment`). `supports_motion_reference_mixed` is
-advertised as `true` for every such model (a reference mixes like text);
-it is kept for clients of the first 1.2 drafts.
+doesn't (`unsupported_segment`), before reading the segment's payload.
+`supports_motion_reference_mixed` is `true` exactly when a model lists
+`"motion_reference"` (a reference mixes like text).
 
 ## VideoReferenceSegment — `type: "video_reference"`
 

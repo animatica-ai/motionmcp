@@ -55,7 +55,7 @@ request body. Response is a `Capabilities` object.
 | `supports_async` | bool | If `true`, server may return `202 Accepted` for long generations (see [Async](./async)) |
 | `supports_segment_seed` | bool | If `true`, the model honours a per-segment `seed` |
 | `supports_loop` | bool | If `true`, the model samples `Options.loop` as a seamless cycle (one segment) |
-| `supports_motion_reference_mixed` | bool | *1.2.* `true` for every model that lists `"motion_reference"`: a reference composes like a text segment. Implied by the segment type; kept for clients of the first 1.2 drafts |
+| `supports_motion_reference_mixed` | bool | *1.2.* `true` exactly when the model lists `"motion_reference"` in `supported_segments` (a reference composes like a text segment), `false` otherwise |
 | `supports_trajectory` | bool | If `true`, every response sample carries its travel trajectory (`MMCP_motion.samples[].trajectory`, see [Response](./response#the-travel-trajectory)) |
 | `supports_batch` | bool | If `true`, `POST /generate` takes a batch body of up to `limits.max_batch_size` requests (see [Endpoints](./endpoints#batches)) |
 | `supported_constraints` | string[] | Constraint type names the model accepts |
@@ -76,9 +76,9 @@ request body. Response is a `Capabilities` object.
 | `max_num_samples` | int | Largest accepted `Options.num_samples` |
 | `max_constraints_per_request` | int | Sum across all constraints in the request |
 | `max_prompt_length` | int | Codepoints, per `TextSegment.prompt` |
-| `max_request_bytes` | int | Body size limit. Exceeding returns `413 payload_too_large` |
+| `max_request_bytes` | int | Body size limit. Exceeding returns `413 payload_too_large`. The SDK server enforces it before parsing: from `Content-Length`, and while reading a body sent without one |
 | `max_batch_size` | int | Most requests in one batch body |
-| `max_reference_frames` | int, optional | *1.2.* Most frames a `motion_reference` segment's clip may carry (its `duration_frames` is capped like any segment's, by `max_duration_seconds`). Set by models that list `"motion_reference"`; absent otherwise |
+| `max_reference_frames` | int, optional | *1.2.* Most frames a `motion_reference` segment's clip may carry, counted **as sent**: a server MUST accept a clip of at most this many frames at any `fps`, resampling or trimming it to its own window as needed (its `duration_frames` is capped like any segment's, by `max_duration_seconds`). Set by models that list `"motion_reference"`; absent otherwise |
 | `max_video_bytes` | int, optional | *1.2.* Most bytes a `video_reference`'s video may be. The SDK enforces it on inline `video.data` (decoded size, `413 payload_too_large`); a server enforces it on a `video.url` when it fetches it. Set by models that list `"video_reference"`; absent otherwise |
 | `max_video_seconds` | number, optional | *1.2.* Most seconds of video a `video_reference` may ask to read. The SDK enforces it on a trimmed video (`end_s − (start_s or 0)`, `400 invalid_options`); a server enforces it on an untrimmed one once it has it. It caps the video, not the output (that is `max_duration_seconds`). Set by models that list `"video_reference"`; absent otherwise |
 

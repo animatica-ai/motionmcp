@@ -192,7 +192,16 @@ if "video_reference" in model_supported_segments(model):
 
 The media type comes from the extension (`.mp4` / `.m4v`, `.mov`, `.webm`)
 unless `media_type` is passed; anything else raises `ValueError`, as does
-an `http://` URL or an empty file. Check `limits.max_video_bytes` before
+an empty file or a URL the server would refuse (not `https`, no host,
+`user:pw@`, whitespace, a bad port). Pass `max_bytes=` (the model's
+`limits.max_video_bytes`) to refuse a file over it before reading it.
+
+`data` must be **standard base64, padded, on one line**: the alphabet
+`A–Z a–z 0–9 + /` with `=` padding, and no line breaks. `video_source`
+and Python's `base64.b64encode` produce exactly that. The GNU `base64`
+command wraps its output at 76 columns by default, which the server
+refuses; use `base64 -w0 clip.mp4` (on macOS, `base64 -i clip.mp4` does
+not wrap). URL-safe base64 (`-` and `_`) is refused too. Check `limits.max_video_bytes` before
 sending a file inline: a server refuses one over it with
 `413 payload_too_large`, and the whole body must still fit
 `limits.max_request_bytes` (base64 is a third bigger than the file).

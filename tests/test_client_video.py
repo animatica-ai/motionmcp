@@ -37,10 +37,38 @@ def test_media_type_can_be_given(tmp_path) -> None:
 
 def test_url() -> None:
     assert video_source(url="https://cdn.example.com/a.mp4") == {"url": "https://cdn.example.com/a.mp4"}
-    with pytest.raises(ValueError):
-        video_source(url="http://cdn.example.com/a.mp4")
+    assert video_source(url="HTTPS://cdn.example.com/a.mp4")["url"] == "HTTPS://cdn.example.com/a.mp4"
     with pytest.raises(ValueError):
         video_source(url="https://cdn.example.com/a.mp4", media_type="video/mp4")
+
+
+@pytest.mark.parametrize("url", [
+    "http://cdn.example.com/a.mp4", "https:///a.mp4", "https://user:pw@cdn.example.com/a.mp4",
+    "https://cdn.example.com/a b.mp4", "https://cdn.example.com/a.mp4\n", "https://cdn.example.com:0/a",
+    "https://cdn.example.com:70000/a", "cdn.example.com/a.mp4",
+])
+def test_url_uses_the_server_rule(url) -> None:
+    with pytest.raises(ValueError):
+        video_source(url=url)
+
+
+def test_max_bytes_is_checked_before_reading(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "big.mp4"
+    path.write_bytes(b"x" * 101)
+    assert video_source(path, max_bytes=101)["media_type"] == "video/mp4"
+    import builtins
+    real_open = builtins.open
+    monkeypatch.setattr(builtins, "open", lambda *a, **k: (_ for _ in ()).throw(AssertionError("read")))
+    with pytest.raises(ValueError):
+        video_source(path, max_bytes=100)
+    monkeypatch.setattr(builtins, "open", real_open)
+
+
+def test_encoding_is_one_padded_line(tmp_path) -> None:
+    path = tmp_path / "long.mp4"
+    path.write_bytes(bytes(range(256)) * 40 + b"x")          # 10241 bytes: padded, > 76 chars
+    data = video_source(path)["data"]
+    assert "\n" not in data and data.endswith("=") and len(data) % 4 == 0
 
 
 def test_exactly_one_source(tmp_path) -> None:

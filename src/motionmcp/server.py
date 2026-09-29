@@ -145,17 +145,15 @@ def build_app(
     # ----- /generate ---------------------------------------------------------
 
     def _parse(payload) -> GenerateRequest:
-        """One generate request, schema- and version-checked."""
+        """One generate request, schema- and version-checked.
+
+        Segment types the named model doesn't take are refused first
+        (``unsupported_segment``), before their payload is parsed at all."""
+        _gate_segment_types(payload, registry)
         try:
             req = GenerateRequest.model_validate(payload)
         except ValidationError as exc:
-            raise ProtocolError(
-                "schema_validation",
-                "request fails schema validation",
-                # Via JSON: a validator's ValueError sits in errors()[i]["ctx"]
-                # and would not serialise (a 500 instead of this 422).
-                details={"errors": json.loads(exc.json(include_url=False))},
-            ) from exc
+            raise _schema_error(exc) from exc
         _check_version(req.protocol_version)
         return req
 
@@ -200,15 +198,25 @@ def build_app(
             trajectories=trajectories,
         )
 
+    # The largest body any model here takes: the cap before the body is read
+    # (which model a request names is only known after parsing it).
+    def _body_cap() -> int:
+        return max((b.capabilities().limits.max_request_bytes for b in registry.values()),
+                   default=int(DEFAULT_LIMITS["max_request_bytes"]))
+
     @app.post("/generate")
     async def post_generate(request: Request) -> Response:
+        cap = _body_cap()
+        body = await _read_body(request, cap)
+        size = len(body)
         try:
-            payload = await request.json()
-        except Exception as exc:
+            payload = json.loads(body)
+        except ValueError as exc:
             raise ProtocolError(
                 "schema_validation",
                 f"request body is not valid JSON: {exc}",
             )
+        del body
 
         # A batch: several generate requests in one body (see _generate_batch).
         if isinstance(payload, dict) and "requests" in payload:
@@ -217,6 +225,8 @@ def build_app(
 
         req = _parse(payload)
         backbone, spec = _backbone_for(req)
+        if size > spec.limits.max_request_bytes:    # this model's own cap
+            raise payload_too_large(size, spec.limits.max_request_bytes)
         result = await _call_generate(backbone, req)
         return JSONResponse(
             content=_encode(req, spec, result),
@@ -298,6 +308,71 @@ def build_app(
     return app
 
 
+# ---- Reading and parsing ---------------------------------------------------
+
+async def _read_body(request: Request, cap: int) -> bytes:
+    """The request body, refused with 413 as soon as it is known to exceed
+    ``cap`` bytes: from ``Content-Length`` before reading, else while
+    streaming (a body without one, or one that lies)."""
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            n = int(declared)
+        except ValueError:
+            raise ProtocolError("schema_validation", "invalid Content-Length") from None
+        if n > cap:
+            raise payload_too_large(n, cap)
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > cap:
+            raise payload_too_large(total, cap, streamed=True)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def payload_too_large(size: int, cap: int, streamed: bool = False) -> ProtocolError:
+    what = f"more than {cap}" if streamed else str(size)
+    return ProtocolError(
+        "payload_too_large",
+        f"request body is {what} bytes; max_request_bytes is {cap}",
+        details={"max_request_bytes": cap, **({} if streamed else {"request_bytes": size})},
+    )
+
+
+def _schema_error(exc: ValidationError) -> ProtocolError:
+    """A pydantic failure as the MMCP envelope: ``400 invalid_skeleton`` when
+    a skeleton's topology is wrong (the request's, or a segment's own), else
+    ``422 schema_validation``. Serialised via JSON (a validator's ValueError
+    in ``ctx`` would not serialise) and without the offending input, which
+    can be megabytes (a bad ``video.data``)."""
+    errors = json.loads(exc.json(include_url=False, include_input=False))
+    topology = [e for e in errors if e.get("type") == "invalid_skeleton"]
+    if topology:
+        return ProtocolError("invalid_skeleton", topology[0]["msg"],
+                             details={"errors": topology})
+    return ProtocolError("schema_validation", "request fails schema validation",
+                         details={"errors": errors})
+
+
+def _gate_segment_types(payload, registry) -> None:
+    """Refuse a segment type the named model doesn't list, from the raw body,
+    so an unsupported payload (a video, a clip) is never parsed. A request
+    this can't read (no such model, no segment list) is left to the schema."""
+    if not isinstance(payload, dict):
+        return
+    backbone = registry.get(payload.get("model")) if isinstance(payload.get("model"), str) else None
+    segments = payload.get("segments")
+    if backbone is None or not isinstance(segments, list):
+        return
+    supported = list(backbone.capabilities().supported_segments)
+    for s in segments:
+        t = s.get("type") if isinstance(s, dict) else None
+        if isinstance(t, str) and t not in supported:
+            raise unsupported_segment(t, supported)
+
+
 # ---- Generic per-spec validation ------------------------------------------
 
 def _spec_json(spec: ModelSpec) -> dict:
@@ -307,9 +382,8 @@ def _spec_json(spec: ModelSpec) -> dict:
     (``supports_motion_reference_mixed``); an optional limit left unset
     (``max_reference_frames``, ``max_video_bytes``, ``max_video_seconds``) is
     left out rather than sent as null."""
-    update = {"supports_batch": True, "supports_trajectory": True}
-    if "motion_reference" in spec.supported_segments:
-        update["supports_motion_reference_mixed"] = True
+    update = {"supports_batch": True, "supports_trajectory": True,
+              "supports_motion_reference_mixed": "motion_reference" in spec.supported_segments}
     out = spec.model_copy(update=update).model_dump(mode="json")
     limits = out.get("limits", {})
     for key in _OPTIONAL_LIMITS:
@@ -517,6 +591,14 @@ def _validate_one_reference(req: GenerateRequest, spec, ref, index: int) -> None
     for j in ref.joint_names:
         if j not in skeleton_joint_names:
             raise unknown_joint(j, sorted(skeleton_joint_names), where)
+    # The clip places the rig by its root: without it there is nothing to place.
+    root = ref_skeleton.root.name
+    if root not in ref.joint_names:
+        raise ProtocolError(
+            "invalid_request",
+            f"motion_reference must include the {where}'s root joint {root!r}",
+            details={"root_joint": root, "segment": index},
+        )
     cap = spec.limits.max_reference_frames
     if cap is not None and ref.reference_frames > cap:
         raise ProtocolError(

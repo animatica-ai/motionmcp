@@ -40,21 +40,20 @@ fps              = 30                                                   the clip
 |---|---|
 | Axes, units | Right-handed, **Y-up, metres**, as everywhere in MMCP (see [Coordinate systems](../concepts/coordinates)) |
 | `rotations[t][j]` | Quaternion **`[x, y, z, w]`** (glTF order, `w` last) |
-| What a rotation is | Joint `j`'s **local rotation relative to its parent**, measured **from the rest pose**: `[0, 0, 0, 1]` means "as in the rest pose". The same convention as `pose_keyframe.joint_rotations` |
+| What a rotation is | Joint `j`'s **local rotation relative to its parent**, the same convention as `pose_keyframe.joint_rotations`. With identity rest rotations (below) this is the rotation **from the rest pose**: `[0, 0, 0, 1]` means "as in the rest pose" |
 | `root_positions[t]` | The **root joint's world position** at frame t (the joint whose `parent` is `null`), not an offset from frame 0 |
 | Quaternion length | Taken as sent; the server normalises. Round to 4 decimals |
 
-**Rest rotations are identity.** In 1.2 clients SHOULD send
+**Rest rotations are identity.** Clients SHOULD send
 `rest_rotation: [0, 0, 0, 1]` on every joint of the skeleton (see
 [below](#the-skeleton) and [Rest rotations](../concepts/skeleton#rest-rotations))
-and express the rest orientation in the rotations. Then every
-joint's rest frame is aligned with the world axes, and "a joint's local
-rotation from rest" is simply *the rotation the joint has turned through
-since the rest pose, expressed in world (MMCP) axes*, relative to its
-parent's. That is what the Blender example below computes. The reference
-server reads a rig's rest pose from `rest_translation` alone and treats an
-identity rotation as rest; a server MAY ignore `rest_rotation` (Kimodo
-does), so don't rely on a non-identity one.
+and fold each bone's own rest orientation into its rotations. Then every
+parent frame at rest is aligned with the world axes, and a joint's local
+rotation is simply *the rotation it has turned through since the rest
+pose, expressed in world (MMCP) axes*, relative to its parent's. That is
+what the Blender example below computes. A server that can't honour a
+non-identity `rest_rotation` refuses it with `400 invalid_skeleton`
+(Kimodo does), so identity is the form every server takes.
 
 **Absolute root positions.** Send where the root really is, frame by
 frame, in the rig's world. You do not need to move the clip to the
@@ -93,10 +92,11 @@ Each joint of a skeleton is:
   BVH rig can be sent as it is.
 - **`parent`** — the parent joint's name; exactly one joint has `null`
   (the root). List every parent before its children.
-- **`rest_translation`** — the joint's rest position minus its parent's,
-  in metres, along the world axes. For the root, its rest position in the
-  world. (With identity rest rotations this is also the offset in the
-  parent's frame.)
+- **`rest_translation`** — the joint's rest offset in its parent's frame,
+  in metres. With identity rest rotations (as you send them) the parent's
+  frame is world-aligned, so this is the joint's rest position minus its
+  parent's, along the world axes; for the root, its rest position in the
+  world.
 - **`rest_rotation`** — `[0, 0, 0, 1]`.
 
 **Joint coverage.**
@@ -128,9 +128,9 @@ Each joint of a skeleton is:
    can prompt a 5-second segment, and a 10-second clip a 2-second one.
 
 **Length.** `limits.max_reference_frames` (300 on Kimodo) caps the
-number of frames you send, counted as sent, before any resampling. A
-server may also check the clip after resampling it to its own rate
-(Kimodo does, at its model rate). To fit, either trim the clip to the part that
+number of frames you send, counted as sent, whatever the `fps`. A clip
+within it is always accepted: the server resamples or trims it to its own
+window. To fit a longer one, either trim the clip to the part that
 matters or thin it: keep every k-th frame and divide `fps` by k. Two to
 ten seconds is usually plenty to say "this kind of motion".
 
@@ -406,8 +406,11 @@ video_source("dance.mov")
 | Size checked by | the server, when it fetches | the SDK server, before the backbone sees it |
 | Good for | files already hosted, long videos | local files, private footage |
 
-A URL must be `https` and reachable by the server (a signed URL with an
-expiry works if it outlives the job). Inline data needs a `media_type`:
+A URL must be `https`, with a host and no `user:password@`, whitespace
+or odd port, and reachable **from the public internet**: servers fetch
+it with SSRF protections, so a URL on `localhost`, a private network or a
+link-local address is refused (`400 invalid_request`) even if the server
+could reach it. A signed URL with an expiry works if it outlives the job. Inline data needs a `media_type`:
 `video/mp4` (`.mp4`, `.m4v`), `video/quicktime` (`.mov`) or `video/webm`
 (`.webm`); `video_source` takes it from the extension.
 

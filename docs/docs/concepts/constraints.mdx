@@ -101,9 +101,9 @@ A pose at a single frame.
 
 Fill mode semantics:
 
-- **`rest`** — unspecified joints are pinned to identity at this frame,
-  i.e. to the rest pose (rotations are measured from rest; see
-  [Rest rotations](./skeleton#rest-rotations)).
+- **`rest`** — unspecified joints are pinned to their `rest_rotation` at
+  this frame (identity, i.e. the rest pose, when identity rest rotations
+  are sent, as clients SHOULD; see [Rest rotations](./skeleton#rest-rotations)).
 - **`generate`** — unspecified joints are unconstrained; the backbone
   generates them as part of the motion. The constraint pins only the
   listed joints.
