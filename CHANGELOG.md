@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.0
+## 0.10.0
 
 MMCP protocol 1.2: motion and video references as prompts.
 
@@ -70,9 +70,6 @@ MMCP protocol 1.2: motion and video references as prompts.
 - `GenerateRequest.motion_reference` / `.motion_references`,
   `MotionReferenceSegment.reference_frames`.
 - Error code `invalid_request` (400), for backbones.
-- Client: `poll_job(server_url, location, ...)` resumes polling an
-  accepted job, e.g. after refreshing a token on a 401 mid-poll, instead of
-  starting a second job. (#8)
 
 ### Changed
 
@@ -81,17 +78,7 @@ MMCP protocol 1.2: motion and video references as prompts.
   text default, to a reference as to text.
 - Trajectory: the root moves along its shape (still / line / arc / Bezier,
   chosen by fit) with the body's centre of mass, not at a constant speed, so
-  a stride's speeding up and slowing down no longer shows as the body
-  floating forward and back when played in place. Models are just
-  still/line/arc/bezier; params gain `speed_range` and drop the distance
-  keys. (#7)
-- Client: every `MmcpError` from `generate()` carries `details["phase"]`
-  (`"generate"` or `"poll"`); poll errors also carry `details["location"]`.
-  Codes and messages are unchanged. (#8)
-
-- *Clarified:* clients SHOULD send identity `rest_rotation` on every
-  joint (1.0 meanings unchanged: `rest_translation` / `rest_rotation` are
-  parent-local, `fill_mode: "rest"` pins to `rest_rotation`); a server that
+  a stride's speedingrest"` pins to `rest_rotation`); a server that
   can't honour a non-identity one MUST refuse it with `400 invalid_skeleton`.
 - The SDK server refuses a body over `limits.max_request_bytes` before
   parsing it (`413 payload_too_large`: from `Content-Length`, or while
@@ -110,3 +97,25 @@ MMCP protocol 1.2: motion and video references as prompts.
   nested too deeply to parse is a 422 envelope too, not a 500.
 - A skeleton with a bad topology (the request's or a segment's) is
   `400 invalid_skeleton`, as documented, not `422 schema_validation`.
+
+## 0.9.0
+
+Released 2026-09-29 (protocol 1.0).
+
+### Added
+
+- Client: `poll_job(server_url, location, ...)` resumes polling an
+  accepted job, e.g. after refreshing a token on a 401 mid-poll, instead of
+  starting a second job. (#8)
+
+### Changed
+
+- Trajectory: the root moves along its shape (still / line / arc / Bezier,
+  chosen by fit) with the body's centre of mass, not at a constant speed, so
+  a stride's speeding up and slowing down no longer shows as the body
+  floating forward and back when played in place. Models are just
+  still/line/arc/bezier; params gain `speed_range` and drop the distance
+  keys. (#7)
+- Client: every `MmcpError` from `generate()` carries `details["phase"]`
+  (`"generate"` or `"poll"`); poll errors also carry `details["location"]`.
+  Codes and messages are unchanged. (#8)
