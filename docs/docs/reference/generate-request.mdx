@@ -194,7 +194,7 @@ for the rules, and **[Building reference segments →](../guides/reference-segme
 
 The dance in seconds 2–6 of a video, as a 4-second take on the character,
 to a model that lists `"video_reference"` in `supported_segments`. The
-server fetches the URL; `person` picks the second dancer it detects:
+server fetches the URL and follows the most prominent dancer in it:
 
 ```json
 {
@@ -206,8 +206,7 @@ server fetches the URL; `person` picks the second dancer it detects:
     "duration_frames": 120,
     "video": { "url": "https://cdn.example.com/dance.mp4" },
     "start_s": 2.0,
-    "end_s": 6.0,
-    "person": 1
+    "end_s": 6.0
   }]
 }
 ```

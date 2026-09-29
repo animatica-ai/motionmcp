@@ -37,7 +37,7 @@ Error responses use a uniform shape:
 | `unknown_joint` | 400 | A constraint references a joint name not in `skeleton.joints` (for a `motion_reference`: not in its own `skeleton` when it carries one) |
 | `invalid_skeleton` | 400 | Skeleton has no root, multiple roots, cycles, or out-of-order joints |
 | `frame_out_of_range` | 400 | A constraint references a frame index outside the request timeline |
-| `invalid_request` | 400 | *1.2.* Parts of the request that are valid alone but can't go together (e.g. a `motion_reference` clip that lacks its skeleton's root joint; a `video_reference` whose video can't be fetched or decoded, or has no person at `person`) |
+| `invalid_request` | 400 | *1.2.* Parts of the request that are valid alone but can't go together (e.g. a `motion_reference` clip that lacks its skeleton's root joint; a `video_reference` whose video can't be fetched or decoded, or has no person in it) |
 | `invalid_options` | 400 | An option value is out of range (e.g. `diffusion_steps: 9999`) or inconsistent (e.g. `guidance.weight` length mismatch), or a reference is over its limit: a `motion_reference` clip over `max_reference_frames`, a `video_reference` reading more than `max_video_seconds` (`details.segment` names it) |
 | `version_unsupported` | 400 | Server does not implement the requested `protocol_version` |
 | `unauthorized` | 401 | Missing or invalid credentials |

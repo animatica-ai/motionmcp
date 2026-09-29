@@ -94,18 +94,18 @@ def test_url_segment_parses() -> None:
     seg = VideoReferenceSegment.model_validate(_url_segment(t=48))
     assert seg.duration_frames == 48 and seg.video.url == _URL
     assert seg.video.data is None and seg.video.num_bytes is None
-    assert (seg.start_s, seg.end_s, seg.person, seg.fps, seg.seed) == (None,) * 5
+    assert (seg.start_s, seg.end_s, seg.fps, seg.seed) == (None,) * 4
     assert seg.trimmed_seconds is None
 
 
 def test_data_segment_parses_and_is_not_decoded_as_video() -> None:
     seg = VideoReferenceSegment.model_validate(
-        _data_segment(start_s=1.5, end_s=4.0, person=2, fps=29.97, seed=9))
+        _data_segment(start_s=1.5, end_s=4.0, fps=29.97, seed=9))
     assert seg.video.media_type == "video/mp4"
     assert seg.video.num_bytes == len(_MP4)
     assert seg.video.decoded() == _MP4
     assert seg.trimmed_seconds == pytest.approx(2.5)
-    assert (seg.person, seg.fps, seg.seed) == (2, 29.97, 9)
+    assert (seg.fps, seg.seed) == (29.97, 9)
 
 
 @pytest.mark.parametrize("media_type", ["video/mp4", "video/quicktime", "video/webm"])
@@ -162,8 +162,7 @@ def test_video_source_rejects(video: dict) -> None:
     {"start_s": 3.0, "end_s": 2.0},                                  # start > end
     {"start_s": float("inf")},
     {"end_s": float("nan")},
-    {"person": -1},
-    {"person": 1.5},
+    {"person": 0},                                                   # not in 1.2: the most prominent
     {"fps": 0},
     {"fps": -24},
     {"prompt": "walk"},                                              # extra field
@@ -179,7 +178,7 @@ def test_zero_start_is_a_trim_from_the_beginning() -> None:
     assert seg.trimmed_seconds == 5
 
 
-@pytest.mark.parametrize("seg", [_url_segment(t=7, end_s=2.5, person=1),
+@pytest.mark.parametrize("seg", [_url_segment(t=7, end_s=2.5),
                                  _data_segment(t=7, start_s=0.5, fps=24, seed=3)])
 def test_json_round_trip(seg) -> None:
     raw = _request({"joints": [{"name": "a", "parent": None, "rest_translation": [0, 0, 0],
@@ -197,14 +196,14 @@ def test_json_round_trip(seg) -> None:
 
 # ---- it reaches the backbone as sent ------------------------------------
 
-@pytest.mark.parametrize("seg", [_url_segment(t=40, seed=3, person=0, start_s=1, end_s=3),
+@pytest.mark.parametrize("seg", [_url_segment(t=40, seed=3, start_s=1, end_s=3),
                                  _data_segment(t=40, fps=30)])
 def test_happy_path_reaches_backbone_parsed(client, backbone, seg) -> None:
     skel = _skeleton(client)
     r = client.post("/generate", json=_request(skel, seg, options={"num_samples": 3}))
     assert r.status_code == 200, r.text
     got = backbone.received[-1].video_reference
-    sent = {"start_s": None, "end_s": None, "person": None, "fps": None, "seed": None, **seg}
+    sent = {"start_s": None, "end_s": None, "fps": None, "seed": None, **seg}
     sent["video"] = {"url": None, "data": None, "media_type": None, **seg["video"]}
     assert got.model_dump(mode="json") == json.loads(json.dumps(sent))
     ext = r.json()["extensions"]["MMCP_motion"]

@@ -44,15 +44,17 @@ fps              = 30                                                   the clip
 | `root_positions[t]` | The **root joint's world position** at frame t (the joint whose `parent` is `null`), not an offset from frame 0 |
 | Quaternion length | Taken as sent; the server normalises. Round to 4 decimals |
 
-**Rest rotations are identity.** Send `rest_rotation: [0, 0, 0, 1]` on
-every joint of the skeleton (see [below](#the-skeleton)). Then every
+**Rest rotations are identity.** In 1.2 clients SHOULD send
+`rest_rotation: [0, 0, 0, 1]` on every joint of the skeleton (see
+[below](#the-skeleton) and [Rest rotations](../concepts/skeleton#rest-rotations))
+and express the rest orientation in the rotations. Then every
 joint's rest frame is aligned with the world axes, and "a joint's local
 rotation from rest" is simply *the rotation the joint has turned through
 since the rest pose, expressed in world (MMCP) axes*, relative to its
 parent's. That is what the Blender example below computes. The reference
 server reads a rig's rest pose from `rest_translation` alone and treats an
-identity rotation as rest; it does not use a non-identity
-`rest_rotation`, so don't rely on one.
+identity rotation as rest; a server MAY ignore `rest_rotation` (Kimodo
+does), so don't rely on a non-identity one.
 
 **Absolute root positions.** Send where the root really is, frame by
 frame, in the rig's world. You do not need to move the clip to the
@@ -411,6 +413,12 @@ expiry works if it outlives the job). Inline data needs a `media_type`:
 
 ### Size
 
+**Use the URL form for anything over a few seconds.** Inline video is
+for short clips: with the default `max_request_bytes` of 1 MiB, the whole
+file has to be under about 750 KB, which is a few seconds of
+phone-quality footage at most. A longer video, or one at a higher bitrate,
+goes by `url`.
+
 Inline video is limited twice:
 
 - **`limits.max_video_bytes`** caps the **file** (the decoded bytes).
@@ -435,12 +443,12 @@ video = video_source("dance.mp4") if fits else video_source(url=upload("dance.mp
 fetch.) Trimming with `start_s` / `end_s` does not make an inline file any
 smaller; cut the file itself if it is too big.
 
-### Trimming, person, fps
+### Trimming, fps, and which person
 
 ```json
 { "type": "video_reference", "duration_frames": 120,
   "video": { "url": "https://cdn.example.com/dance.mp4" },
-  "start_s": 2.0, "end_s": 6.0, "person": 1, "fps": 30 }
+  "start_s": 2.0, "end_s": 6.0, "fps": 30 }
 ```
 
 - **`start_s` / `end_s`** — the stretch of the video to read, in seconds
@@ -448,11 +456,11 @@ smaller; cut the file itself if it is too big.
   start, or to the end. When `end_s` is given, `end_s − (start_s or 0)`
   must fit `limits.max_video_seconds`; an untrimmed video's length is
   checked by the server once it has it.
-- **`person`** — which person to follow when there are several, as an
-  index into the server's own ordering of the people it detects. Left out,
-  the server follows the most prominent one. Since the ordering is the
-  server's, leave it out unless the model documents its ordering or the
-  video has one clear subject.
+- **Which person** — the server follows the **most prominent person**:
+  the largest, most visible one over the stretch it reads. There is no
+  field to choose another in 1.2. If the video has several people, trim
+  it (or crop the file) to a stretch where the one you want is the clear
+  subject. Choosing among several people may come in a later version.
 - **`fps`** — a hint for the video's frame rate, for footage whose
   container reports it wrongly (some screen recordings and re-encodes).
   Normally leave it out.

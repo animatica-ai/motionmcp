@@ -531,7 +531,7 @@ def _validate_one_reference(req: GenerateRequest, spec, ref, index: int) -> None
 def _validate_video_reference(req: GenerateRequest, spec) -> None:
     """A video reference's payload against the model's limits, as far as the
     SDK can see it: inline data's decoded size, and the trimmed length when
-    the request states one. A URL's size, an untrimmed video's length, the
+    the request states one. A URL's size, an untrimmed video's length, finding a
     person to follow are the backbone's to check once it has the video."""
     max_bytes = spec.limits.max_video_bytes
     max_seconds = spec.limits.max_video_seconds

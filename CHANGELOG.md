@@ -10,8 +10,8 @@ MMCP protocol 1.2: motion and video references as prompts.
   video instead of text. `video` is exactly one of `{"url": "https://..."}`
   (the server fetches it) or `{"data": <base64>, "media_type": "video/mp4" |
   "video/quicktime" | "video/webm"}`; optional `start_s` / `end_s` trim
-  (`0 <= start_s < end_s`), `person` (index of the person to follow; default
-  the most prominent) and `fps` (a hint). Otherwise it **is a text segment**,
+  (`0 <= start_s < end_s`) and `fps` (a hint); the server follows the most
+  prominent person in the video. Otherwise it **is a text segment**,
   validated with the text rules exactly as `motion_reference` is. The SDK
   checks the payload (one source, https with a host, valid non-empty
   base64, the trim; 422) and never decodes the video: a backbone gets it

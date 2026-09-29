@@ -212,8 +212,7 @@ segment's rules.
   "duration_frames": 120,
   "video": { "url": "https://cdn.example.com/dance.mp4" },
   "start_s": 2.0,
-  "end_s": 6.0,
-  "person": 0
+  "end_s": 6.0
 }
 
 // The video inline
@@ -235,19 +234,25 @@ segment's rules.
 | `video.media_type` | `"video/mp4"` \| `"video/quicktime"` \| `"video/webm"` | with `data` | The container of `data` |
 | `start_s` | number (≥ 0) | no | Where to start reading, in seconds into the video. Default: the start |
 | `end_s` | number (> `start_s`) | no | Where to stop reading, in seconds into the video. Default: the end |
-| `person` | int (≥ 0) | no | Which person to follow, by the server's ordering of the people it detects. Default: the most prominent one |
 | `fps` | number (> 0) | no | A hint for the video's frame rate, for containers that report it badly |
 | `seed` | int | no | Per-segment seed, as [`TextSegment.seed`](#textsegment--type-text) |
 
-Unknown fields are rejected (`422`), in the segment and in `video`. To
-build one (inline or by URL, the size math, trimming, choosing a person),
+Unknown fields are rejected (`422`), in the segment and in `video`.
+
+**Which person.** The server follows the **most prominent person** in the
+video — the largest, most visible one over the stretch it reads. There is
+no field to pick another in 1.2; trim or crop the video so the person you
+want is the clear subject. (Choosing among several people may come in a
+later version; see the [roadmap](../protocol/roadmap).)
+
+To build one (inline or by URL, the size math, trimming),
 see **[Building reference segments →](../guides/reference-segments)**.
 
 The payload's own checks:
 
 - `video` has exactly one of `url` / `data`; a `url` is `https` with a host
   and has no `media_type`; `data` is valid, non-empty base64 with one of
-  the three `media_type`s; `0 ≤ start_s < end_s`; `person ≥ 0`; `fps > 0`
+  the three `media_type`s; `0 ≤ start_s < end_s`; `fps > 0`
   → otherwise `422 schema_validation`.
 - Inline `data` whose decoded size is over `limits.max_video_bytes` (when
   set) → `413 payload_too_large`, `details.segment` naming it. The whole
@@ -259,7 +264,7 @@ The payload's own checks:
 - What the SDK cannot see, the server checks once it has the video: a
   `url`'s size against `max_video_bytes`, an untrimmed video's length
   against `max_video_seconds`, and whether the video can be fetched and
-  decoded and has the requested person in it (`400 invalid_request`).
+  decoded and has a person in it (`400 invalid_request`).
 
 Everything else is the `text` segment's rule, unchanged. The response is
 the usual glTF, exactly as for a text request. The SDK never decodes video:

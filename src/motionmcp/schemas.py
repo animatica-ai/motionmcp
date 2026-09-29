@@ -256,10 +256,9 @@ class VideoReferenceSegment(BaseModel):
     exactly as a text segment does; the SDK validates it with the same rules.
 
     ``start_s`` / ``end_s`` (optional, seconds into the video, ``0 <= start_s
-    < end_s``) trim it to the stretch to read. ``person`` (optional, >= 0)
-    picks which person to follow, by the backbone's own ordering of the
-    people it detects; left out, the backbone follows the most prominent one.
-    ``fps`` (optional) is a hint for the video's frame rate, for containers
+    < end_s``) trim it to the stretch to read. The backbone follows the
+    most prominent person in the video (the largest, most visible one);
+    choosing among several people is not part of 1.2. ``fps`` (optional) is a hint for the video's frame rate, for containers
     that report it badly; the video's length is independent of
     ``duration_frames``.
 
@@ -277,7 +276,6 @@ class VideoReferenceSegment(BaseModel):
     video: VideoSource
     start_s: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
     end_s: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
-    person: Optional[int] = Field(None, ge=0)
     fps: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
     # See ``TextSegment.seed`` -- same per-segment override semantics.
     seed: Optional[int] = None

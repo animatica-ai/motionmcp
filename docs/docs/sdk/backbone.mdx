@@ -178,8 +178,9 @@ source (an `https` `video.url`, or base64 `video.data` with a
 `max_video_bytes` (`413 payload_too_large`) and a trimmed video within
 `max_video_seconds` (`400 invalid_options`). It never decodes the video;
 the rest is yours, once you have it: fetch the URL (and refuse one over
-`max_video_bytes`), check an untrimmed video's length, find the person to
-follow, and raise `invalid_request` when you can't:
+`max_video_bytes`), check an untrimmed video's length, find the most
+prominent person (the largest, most visible one) to follow, and raise
+`invalid_request` when you can't:
 
 ```python
 from motionmcp import ProtocolError
@@ -188,9 +189,8 @@ for seg in req.segments:
     if seg.type == "video_reference":
         raw = seg.video.decoded() if seg.video.data else fetch(seg.video.url)
         # seg.video.media_type (inline), seg.start_s / seg.end_s (seconds
-        # into the video, None = its start / end), seg.person (None = the
-        # most prominent person), seg.fps (a hint, or None)
-        track = track_person(raw, seg.start_s, seg.end_s, seg.person)
+        # into the video, None = its start / end), seg.fps (a hint, or None)
+        track = track_most_prominent_person(raw, seg.start_s, seg.end_s)
         if track is None:
             raise ProtocolError("invalid_request", "no person to follow in the video",
                                 details={"segment": req.segments.index(seg)})
