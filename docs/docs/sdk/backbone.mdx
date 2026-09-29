@@ -201,25 +201,35 @@ metadata endpoint, its private network). A backbone that fetches one MUST:
 - stream the body and stop past `limits.max_video_bytes`
   (`413 payload_too_large`), and bound the whole fetch with a timeout.
 
-`motionmcp.fetch_video_url(url, max_bytes=..., timeout=30.0)` does all of
+`motionmcp.fetch_video_url(url, max_bytes=None, timeout=30.0)` does all of
 this with the standard library, raising `ProtocolError`s you can let
-propagate (`invalid_request`, `payload_too_large`, `timeout`):
+propagate (`invalid_request`, `payload_too_large`, `timeout`). IPv6
+addresses that reach an IPv4 one (mapped, NAT64, 6to4, Teredo) are judged
+by that address, and `timeout` is one hard deadline over connect, TLS,
+headers and body. `max_bytes=None` (your model advertises no
+`max_video_bytes`) means `motionmcp.fetch.DEFAULT_MAX_VIDEO_BYTES`,
+100 MiB. It is synchronous: from an `async def generate`, run it with
+`asyncio.to_thread` so it doesn't block the event loop.
 
 ```python
+import asyncio
+
 from motionmcp import ProtocolError, fetch_video_url
 
-for seg in req.segments:
-    if seg.type == "video_reference":
-        raw = (seg.video.decoded() if seg.video.data else
-               fetch_video_url(seg.video.url, max_bytes=self.capabilities().limits.max_video_bytes))
-        # seg.video.media_type (inline), seg.start_s / seg.end_s (seconds
-        # into the video, None = its start / end), seg.fps (a hint, or None)
-        track = track_most_prominent_person(raw, seg.start_s, seg.end_s)
-        if track is None:
-            raise ProtocolError("invalid_request", "no person to follow in the video",
-                                details={"segment": req.segments.index(seg)})
-        caption = embed_track(track)      # video -> the text encoder's kind of vector
-    ...                                   # then the text path, as for a motion reference
+async def generate(self, req):
+    cap = self.capabilities().limits.max_video_bytes      # None -> the 100 MiB default
+    for seg in req.segments:
+        if seg.type == "video_reference":
+            raw = (seg.video.decoded() if seg.video.data else
+                   await asyncio.to_thread(fetch_video_url, seg.video.url, max_bytes=cap))
+            # seg.video.media_type (inline), seg.start_s / seg.end_s (seconds
+            # into the video, None = its start / end), seg.fps (a hint, or None)
+            track = track_most_prominent_person(raw, seg.start_s, seg.end_s)
+            if track is None:
+                raise ProtocolError("invalid_request", "no person to follow in the video",
+                                    details={"segment": req.segments.index(seg)})
+            caption = embed_track(track)      # video -> the text encoder's kind of vector
+        ...                                   # then the text path, as for a motion reference
 ```
 
 `req.video_references` lists them in order (`req.video_reference` is the

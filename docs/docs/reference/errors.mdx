@@ -33,7 +33,7 @@ Error responses use a uniform shape:
 | `unknown_model` | 400 | `model` is not in `/capabilities` |
 | `retargeting_unsupported` | 400 | Custom skeleton sent to a backbone with `supports_retargeting=false` |
 | `unsupported_constraint` | 400 | A constraint type is not in `model.supported_constraints` |
-| `unsupported_segment` | 400 | A segment type (e.g. `"pose"`, or one the server doesn't know) is not in `model.supported_segments`. Checked before the segment's payload is read |
+| `unsupported_segment` | 400 | A segment type (e.g. `"pose"`) is not in `model.supported_segments`. Checked before the segment's payload is read. A type the server doesn't know at all is `422 schema_validation` |
 | `unknown_joint` | 400 | A constraint references a joint name not in `skeleton.joints` (for a `motion_reference`: not in its own `skeleton` when it carries one) |
 | `invalid_skeleton` | 400 | Skeleton (the request's, or a `motion_reference`'s own) has no root, multiple roots, cycles, or out-of-order joints; or (1.2) has a non-identity `rest_rotation` the server can't honour |
 | `frame_out_of_range` | 400 | A constraint references a frame index outside the request timeline |

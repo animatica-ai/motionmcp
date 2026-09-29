@@ -251,10 +251,47 @@ def test_unsupported_segment_before_its_payload_is_parsed() -> None:
     assert r.json()["error"]["code"] == "unsupported_segment"
 
 
-def test_an_unknown_segment_type_is_unsupported_segment() -> None:
+def test_an_unknown_segment_type_is_still_a_schema_error() -> None:
     c = _client()
     r = c.post("/generate", json=_body(_skel(c), {"type": "audio", "duration_frames": 10}))
-    assert r.status_code == 400 and r.json()["error"]["code"] == "unsupported_segment"
+    assert r.status_code == 422 and r.json()["error"]["code"] == "schema_validation"
+
+
+def test_the_protocol_major_is_checked_before_the_segment_gate() -> None:
+    c = _client(segments=())
+    body = {**_body(_skel(c), {"type": "video_reference", "duration_frames": 10,
+                               "video": {"url": "https://cdn.example.com/a.mp4"}}),
+            "protocol_version": "2.0"}
+    r = c.post("/generate", json=body)
+    assert r.status_code == 400 and r.json()["error"]["code"] == "version_unsupported"
+
+
+# ---- deeply nested JSON ---------------------------------------------------------------
+
+@pytest.mark.parametrize("wrap", [lambda deep: deep,
+                                  lambda deep: '{"protocol_version": "1.2", "requests": [' + deep + ']}'])
+def test_deeply_nested_json_is_a_422_envelope(wrap) -> None:
+    c = _client()
+    r = _post_raw(c, wrap("[" * 50_000 + "]" * 50_000))
+    assert r.status_code == 422, r.text[:200]
+    assert r.json()["error"]["code"] == "schema_validation"
+
+
+# ---- batch items against their own model's cap ------------------------------------------
+
+def test_batch_items_are_capped_by_their_own_model() -> None:
+    small = RefNull(model_id="small", max_request_bytes=1_000)
+    big = RefNull(model_id="big", max_request_bytes=100_000)
+    c = TestClient(build_app([small, big]))
+    item = {k: v for k, v in _body(_skel(c), {"type": "text", "prompt": "x" * 900,
+                                              "duration_frames": 10}).items()
+            if k != "protocol_version"}
+    r = c.post("/generate", json={"protocol_version": "1.2", "requests": [
+        {**item, "model": "big"}, {**item, "model": "small"}]})
+    res = r.json()["results"]
+    assert "gltf" in res[0]
+    assert res[1]["error"]["code"] == "payload_too_large"
+    assert res[1]["error"]["details"]["max_request_bytes"] == 1_000
 
 
 # ---- /capabilities for a backbone that takes no references ---------------------------------

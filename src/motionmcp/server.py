@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
+import typing
 from contextlib import asynccontextmanager
 from typing import Iterable, Mapping
 
@@ -42,7 +44,7 @@ from .protocol import (
     ROTATION_FORMAT,
     UNITS,
 )
-from .schemas import GenerateRequest
+from .schemas import GenerateRequest, Segment
 
 
 # ---- Backbone registry ----------------------------------------------------
@@ -147,8 +149,12 @@ def build_app(
     def _parse(payload) -> GenerateRequest:
         """One generate request, schema- and version-checked.
 
-        Segment types the named model doesn't take are refused first
+        A protocol major this server doesn't speak is refused first; then
+        segment types the SDK knows but the named model doesn't take
         (``unsupported_segment``), before their payload is parsed at all."""
+        version = payload.get("protocol_version") if isinstance(payload, dict) else None
+        if isinstance(version, str) and _VERSION.fullmatch(version):
+            _check_version(version)
         _gate_segment_types(payload, registry)
         try:
             req = GenerateRequest.model_validate(payload)
@@ -211,11 +217,12 @@ def build_app(
         size = len(body)
         try:
             payload = json.loads(body)
-        except ValueError as exc:
+        except (ValueError, RecursionError) as exc:
+            # RecursionError: nesting deeper than the parser goes.
             raise ProtocolError(
                 "schema_validation",
-                f"request body is not valid JSON: {exc}",
-            )
+                f"request body is not valid JSON: {type(exc).__name__}: {exc}"[:500],
+            ) from None
         del body
 
         # A batch: several generate requests in one body (see _generate_batch).
@@ -272,6 +279,11 @@ def build_app(
                     raise ProtocolError("schema_validation", "each request must be an object")
                 req = _parse({"protocol_version": version, **raw})
                 _, spec = _backbone_for(req)
+                # Each item against its own model's cap (the body as a whole
+                # was checked against the largest one).
+                item_bytes = len(json.dumps(raw, separators=(",", ":")))
+                if item_bytes > spec.limits.max_request_bytes:
+                    raise payload_too_large(item_bytes, spec.limits.max_request_bytes)
             except ProtocolError as exc:
                 results[i] = exc.to_envelope()
                 continue
@@ -356,10 +368,18 @@ def _schema_error(exc: ValidationError) -> ProtocolError:
                          details={"errors": errors})
 
 
+_VERSION = re.compile(r"\d+\.\d+")
+# Segment types the SDK's schema knows; any other type is a schema error.
+_KNOWN_SEGMENTS = frozenset(
+    typing.get_args(model.model_fields["type"].annotation)[0]
+    for model in typing.get_args(typing.get_args(Segment)[0]))
+
+
 def _gate_segment_types(payload, registry) -> None:
-    """Refuse a segment type the named model doesn't list, from the raw body,
-    so an unsupported payload (a video, a clip) is never parsed. A request
-    this can't read (no such model, no segment list) is left to the schema."""
+    """Refuse a segment type the SDK knows but the named model doesn't list,
+    from the raw body, so an unsupported payload (a video, a clip) is never
+    parsed. A request this can't read (no such model, no segment list) and a
+    type the SDK doesn't know are left to the schema (422)."""
     if not isinstance(payload, dict):
         return
     backbone = registry.get(payload.get("model")) if isinstance(payload.get("model"), str) else None
@@ -369,7 +389,7 @@ def _gate_segment_types(payload, registry) -> None:
     supported = list(backbone.capabilities().supported_segments)
     for s in segments:
         t = s.get("type") if isinstance(s, dict) else None
-        if isinstance(t, str) and t not in supported:
+        if t in _KNOWN_SEGMENTS and t not in supported:
             raise unsupported_segment(t, supported)
 
 

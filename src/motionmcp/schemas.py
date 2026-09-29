@@ -212,7 +212,7 @@ def base64_decoded_size(data: str) -> int:
     if len(data) % 4 or not _BASE64.fullmatch(data):
         raise ValueError("video.data must be standard base64 (A-Z a-z 0-9 + /, "
                          "padded with =, no line breaks)")
-    padding = len(data) - len(data.rstrip("="))
+    padding = (data[-2:] == "==") + (data[-1:] == "=")      # no copy of the payload
     return len(data) // 4 * 3 - padding
 
 

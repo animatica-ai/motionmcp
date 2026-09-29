@@ -33,8 +33,11 @@ MMCP protocol 1.2: motion and video references as prompts.
   library only.
 - `motionmcp.fetch_video_url(url, max_bytes=, timeout=)`: fetch a
   `video.url` without SSRF -- https only, every resolved address and every
-  redirect hop must be public, the connection pinned to the checked
-  address, a streamed byte cap and a deadline. Standard library only.
+  redirect hop must be public (IPv6 forms that embed an IPv4 address --
+  mapped, compatible, NAT64, 6to4, Teredo -- judged by it), the connection
+  pinned to the checked address, a streamed byte cap (default 100 MiB) and
+  one hard deadline over connect, TLS, headers and body. Synchronous,
+  standard library only.
 - `motion_reference` segment (`MotionReferenceSegment`): a prompt given as a
   motion instead of text. Send a clip (`joint_names`, per-frame local
   `rotations` T×J×4, `root_positions` T×3, `fps`) where a text segment
@@ -93,14 +96,17 @@ MMCP protocol 1.2: motion and video references as prompts.
 - The SDK server refuses a body over `limits.max_request_bytes` before
   parsing it (`413 payload_too_large`: from `Content-Length`, or while
   streaming one sent without), and each model's own cap after.
-- A segment type the model doesn't list -- or one the SDK doesn't know --
-  is `unsupported_segment`, checked before the segment's payload is parsed.
+- A segment type the SDK knows but the model doesn't list is
+  `unsupported_segment`, checked (after the protocol major) before the
+  segment's payload is parsed; a type the SDK doesn't know stays 422.
+- Batch items are held to their own model's `max_request_bytes`.
 
 ### Fixed
 
 - A request failing one of the schema's own validators (e.g. `root_path`
   lengths) is a `422 schema_validation` envelope with the message, not a
   500 from an unserialisable error context; the envelope no longer echoes
-  the offending input (which could be megabytes of `video.data`).
+  the offending input (which could be megabytes of `video.data`). A body
+  nested too deeply to parse is a 422 envelope too, not a 500.
 - A skeleton with a bad topology (the request's or a segment's) is
   `400 invalid_skeleton`, as documented, not `422 schema_validation`.
