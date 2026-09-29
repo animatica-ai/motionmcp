@@ -53,6 +53,7 @@ __all__ = [
     "ProbeResult",
     "probe_server",
     "generate",
+    "poll_job",
 ]
 
 _DEFAULT_TIMEOUT = 600.0  # cloud cold-start + inference can take up to ~5 min
@@ -335,8 +336,35 @@ def probe_server(server_url, *, timeout=5.0, access_token=None) -> ProbeResult:
     return ProbeResult(ok=True, status="online", message="Server is reachable.", capabilities=caps)
 
 
-def _poll_job(server_url, location, retry_after, timeout, access_token, on_progress=None):
-    """Poll an async job URL (202 pattern) until it returns 200 or timeout.
+def _with_phase(err, phase, location=None):
+    """Tag *err* with the phase it came from (and the job ``location``).
+
+    ``setdefault``, so the innermost phase wins: an error already tagged
+    ``"poll"`` stays ``"poll"`` when it passes up through :func:`generate`.
+    """
+    err.details.setdefault("phase", phase)
+    if location is not None:
+        err.details.setdefault("location", location)
+    return err
+
+
+def poll_job(server_url, location, *, retry_after=2.0, timeout=_DEFAULT_TIMEOUT,
+             access_token=None, on_progress=None):
+    """Poll an async job (the ``202`` pattern) until it returns ``200`` or times out.
+
+    Returns the job's glTF 2.0 JSON document; a GLB answer is unpacked the
+    same way :func:`generate` unpacks it. ``location`` is the job path from
+    the ``202``'s ``Location`` header, relative to ``server_url`` (an
+    absolute URL is cut down to its path). Polls no faster than every
+    0.5 s, honouring ``Retry-After``; ``timeout`` counts from the start of
+    polling.
+
+    Every :class:`MmcpError` raised while polling carries
+    ``details["phase"] == "poll"`` and ``details["location"]`` -- the path
+    that was polled. That is how a caller resumes: after a
+    ``"auth_required"`` it refreshes the token and calls ``poll_job`` again
+    with the same location, instead of re-running :func:`generate` and
+    starting a second job.
 
     ``on_progress(msg)`` is called with a status string on each poll cycle so
     the caller can surface elapsed time in the UI.
@@ -348,7 +376,20 @@ def _poll_job(server_url, location, retry_after, timeout, access_token, on_progr
         )
     if not location.startswith("/"):
         location = "/" + location.split("/", 3)[-1]
-    url = server_url.rstrip("/") + location
+    try:
+        return _poll(server_url.rstrip("/") + location, retry_after, timeout,
+                     access_token, on_progress)
+    except MmcpError as err:
+        raise _with_phase(err, "poll", location)
+    except Exception as exc:
+        raise _with_phase(
+            MmcpError(f"Generate request failed: {exc}", code="transport"),
+            "poll", location,
+        ) from exc
+
+
+def _poll(url, retry_after, timeout, access_token, on_progress):
+    """The polling loop behind :func:`poll_job`, on a full job URL."""
     start = time.time()
     deadline = start + timeout
     headers = {}
@@ -418,7 +459,21 @@ def generate(server_url, request_body, timeout=_DEFAULT_TIMEOUT, access_token=No
     after the standard ones. The caller uses it to identify itself; the
     ``Authorization`` header is derived from ``access_token`` and wins over
     any same-named entry here.
+
+    Every :class:`MmcpError` carries ``details["phase"]``: ``"generate"``
+    when the ``POST`` itself failed, ``"poll"`` (plus ``details["location"]``)
+    when the job was accepted and polling it failed -- see :func:`poll_job`
+    for resuming that job instead of starting another.
     """
+    try:
+        return _generate(server_url, request_body, timeout, access_token,
+                         on_progress, headers)
+    except MmcpError as err:
+        raise _with_phase(err, "generate")
+
+
+def _generate(server_url, request_body, timeout, access_token, on_progress, headers):
+    """The body of :func:`generate`, before its errors are tagged with a phase."""
     url = server_url.rstrip("/") + "/generate"
     payload = json.dumps(request_body).encode("utf-8")
     request_headers = {
@@ -440,9 +495,9 @@ def generate(server_url, request_body, timeout=_DEFAULT_TIMEOUT, access_token=No
             if status == 202:
                 location = resp.headers.get("Location") or ""
                 retry_after = float(resp.headers.get("Retry-After") or "2")
-                return _poll_job(
-                    server_url, location, retry_after, timeout, access_token,
-                    on_progress=on_progress,
+                return poll_job(
+                    server_url, location, retry_after=retry_after, timeout=timeout,
+                    access_token=access_token, on_progress=on_progress,
                 )
             if status == 200:
                 body = resp.read()

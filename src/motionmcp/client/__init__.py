@@ -21,6 +21,7 @@ from .http import (
     get_capabilities,
     model_supported_segments,
     pick_model,
+    poll_job,
     probe_server,
     retarget_state,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "parse_gltf",
     "parse_gltf_samples",
     "pick_model",
+    "poll_job",
     "probe_server",
     "retarget_state",
     "xyzw_to_rotmat",
