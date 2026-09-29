@@ -73,7 +73,9 @@ def test_an_acceleration_is_timed_not_averaged():
     early and behind it late -- in place, the body slides back, then forward."""
     J, path = _walker(n=150, speed=4.0, ramp=True)
     t = trajectory_from_points(J, FPS, loop=False)
-    assert "distance curve" in t["model"]
+    assert t["model"] == "line"
+    lo, hi = t["params"]["speed_range"]
+    assert lo < 0.5 and hi > 3.0                       # timed by the body, not at one speed
     # along the direction of travel the trajectory keeps pace with the path
     err = np.abs(t["xy"][:, 1] - path[:, 1])
     assert err.max() < 0.08, err.max()
@@ -279,3 +281,14 @@ def test_foot_markers():
     t = trajectory_from_points(J, FPS, loop=True, root_xy=J["hips"][0][-1, :2] - J["hips"][0][0, :2])
     m = t["markers"]
     assert len(m["LeftFootDown"]) >= 2 and len(m["RightFootDown"]) >= 2
+
+
+def test_in_place_the_body_does_not_float_forward_and_back():
+    """The trajectory moves with the body along its line: a stride's surge
+    (the walker's +-3 cm) is not left in the pose."""
+    J, _ = _walker(n=120, speed=1.2, loop=False)
+    t = trajectory_from_points(J, FPS, loop=False)
+    from motionmcp.trajectory import _Body
+    com = _Body(J, FPS, False).com
+    along = (com[:, 1] - com[0, 1]) - (t["xy"][:, 1] - t["xy"][0, 1])
+    assert float(np.ptp(along[10:-10])) < 0.015, float(np.ptp(along[10:-10]))
