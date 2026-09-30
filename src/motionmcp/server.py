@@ -196,6 +196,11 @@ def build_app(
             joint_names=joint_names,
             rotations_quat=result.rotations,
             root_translations=result.root_translations,
+            # only if the model says it sends them; a backbone that fills the
+            # field without advertising it is a backbone whose clients were
+            # never told to expect the channels
+            translations=(result.translations
+                          if spec.supports_joint_translation else None),
             fps=fps,
             model_id=spec.id,
             foot_contacts=result.foot_contacts or None,

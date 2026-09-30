@@ -3,7 +3,11 @@
 
 Builds a self-contained glTF (buffers embedded as ``data:`` URIs) with one
 animation per generated sample. Each animation has dense per-frame ``LINEAR``
-channels: a quaternion track per joint, plus a translation track on the root.
+channels: a quaternion track per joint, a translation track on the root, and --
+for a rig that deforms by MOVING joints rather than turning them -- a
+translation track on any other joint that does not simply sit at its rest
+offset. A reader that ignores those still gets a correct skeleton, turned
+right and placed right; it gets a stiffer one.
 
 The MMCP-specific metadata (model id, fps, foot contacts, sample frame counts,
 chunk boundaries, travel trajectories) lives in ``extensions.MMCP_motion``.
@@ -200,7 +204,8 @@ def build_gltf(
     joint_names: Sequence[str],
     rotations_quat: np.ndarray,                                 # (B, T, J, 4) (x,y,z,w)
     root_translations: np.ndarray,                              # (B, T, 3)
-    fps: float,
+    translations: np.ndarray | None = None,                     # (B, T, J, 3)
+    fps: float = 30.0,
     model_id: str,
     foot_contacts: dict[str, np.ndarray] | None = None,         # {joint_name: (B, T) bool}
     chunk_boundaries: Sequence[Sequence[int]] | None = None,    # per-sample int lists
@@ -244,6 +249,11 @@ def build_gltf(
             f"rotations_quat must be (B, T, J, 4); got {rotations_quat.shape}"
         )
     B, T, J, _ = rotations_quat.shape
+    if translations is not None and translations.shape != (B, T, J, 3):
+        raise ValueError(
+            f"translations must be (B={B}, T={T}, J={J}, 3); "
+            f"got {translations.shape}"
+        )
     if root_translations.shape != (B, T, 3):
         raise ValueError(
             f"root_translations must be (B={B}, T={T}, 3); "
@@ -291,7 +301,7 @@ def build_gltf(
                 "target":  {"node": j, "path": "rotation"},
             })
 
-        # One translation channel for the root.
+        # One translation channel for the root: where the character is.
         root_acc = bb.add(root_translations[b], kind="VEC3")
         sampler_idx = len(samplers)
         samplers.append({
@@ -303,6 +313,32 @@ def build_gltf(
             "sampler": sampler_idx,
             "target":  {"node": root_idx, "path": "translation"},
         })
+
+        # AND ONE FOR EVERY JOINT THAT IS MOVED RATHER THAN TURNED. A joint
+        # that stays at its rest offset needs no channel and gets none -- on a
+        # rig of 357 joints that is nearly all of them, so this costs the file
+        # only the joints that use it. The root already has its own above.
+        if translations is not None:
+            rest = np.asarray(
+                [j.get("rest_translation", (0.0, 0.0, 0.0))
+                 for j in skeleton["joints"]], dtype=np.float32)
+            for j in range(J):
+                if j == root_idx:
+                    continue
+                track = np.asarray(translations[b, :, j, :], dtype=np.float32)
+                if np.allclose(track, rest[j], atol=1e-6):
+                    continue
+                acc = bb.add(track, kind="VEC3")
+                sampler_idx = len(samplers)
+                samplers.append({
+                    "input":         ts_acc,
+                    "output":        acc,
+                    "interpolation": "LINEAR",
+                })
+                channels.append({
+                    "sampler": sampler_idx,
+                    "target":  {"node": j, "path": "translation"},
+                })
 
         animations.append({
             "name":     f"sample_{b}",
