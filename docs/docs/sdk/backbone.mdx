@@ -258,6 +258,24 @@ class MyBackbone(Backbone):
 Items arrive already validated, grouped by model. Sync or async, like
 `generate()`.
 
+## `batch_key(request)`
+
+Optional, and only consulted by a server built with a batch window (see
+[Serving](./serving#batching-requests-from-several-clients)). Requests that
+arrive within the window and return an equal key go to `generate_batch()` in
+one call. The default returns `None` for every request, so any two of this
+model's requests may share a call — right when `generate_batch()` sorts out
+the incompatible ones itself. Return what one call fixes for the whole batch
+to have the SDK keep them apart:
+
+```python
+class MyBackbone(Backbone):
+    def batch_key(self, request):
+        options = request.options
+        # one call takes one step count and one guidance setting
+        return (options.diffusion_steps, options.guidance.type if options.guidance else None)
+```
+
 ## `setup()` and `teardown()`
 
 Optional hooks called once at server startup and shutdown. Use them for

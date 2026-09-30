@@ -23,6 +23,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from ._batcher import RequestBatcher
 from .backbone import Backbone, ModelSpec, MotionResult, is_async_generate
 from .errors import (
     ProtocolError,
@@ -101,13 +102,23 @@ def build_app(
     *,
     title: str = "MMCP",
     description: str | None = None,
+    batch_window_ms: int = 0,
+    max_batch_size: int | None = None,
 ) -> FastAPI:
     """Build a FastAPI app that serves the MMCP protocol for ``backbone``.
 
     ``backbone`` may be a single :class:`Backbone`, a dict of
     ``{model_id: Backbone}``, or an iterable of backbones.
+
+    ``batch_window_ms`` above zero holds each arriving request that long and
+    hands the ones sharing a :meth:`~motionmcp.Backbone.batch_key` to
+    :meth:`~motionmcp.Backbone.generate_batch` in one call; zero (the default)
+    answers every request on its own, as before. ``max_batch_size`` caps how
+    many go in one call, never above the model's own
+    ``limits.max_batch_size``.
     """
     registry = _to_registry(backbone)
+    batcher = RequestBatcher(_call_generate_batch, batch_window_ms) if batch_window_ms > 0 else None
 
     @asynccontextmanager
     async def _lifespan(_: FastAPI):
@@ -234,7 +245,15 @@ def build_app(
         backbone, spec = _backbone_for(req)
         if size > spec.limits.max_request_bytes:    # this model's own cap
             raise payload_too_large(size, spec.limits.max_request_bytes)
-        result = await _call_generate(backbone, req)
+        if batcher is not None:
+            cap = spec.limits.max_batch_size
+            if max_batch_size is not None:
+                cap = min(cap, max_batch_size)
+            result = await batcher.run(
+                (req.model, backbone.batch_key(req)), backbone, req, cap,
+            )
+        else:
+            result = await _call_generate(backbone, req)
         return JSONResponse(
             content=_encode(req, spec, result),
             media_type="model/gltf+json",
@@ -667,6 +686,8 @@ def serve(
     port: int = 8000,
     log_level: str = "info",
     title: str = "MMCP",
+    batch_window_ms: int = 0,
+    max_batch_size: int | None = None,
 ) -> None:
     """Build the app and run it under uvicorn. Blocks until the server stops.
 
@@ -675,5 +696,7 @@ def serve(
     """
     import uvicorn
 
-    app = build_app(backbone, title=title)
+    app = build_app(
+        backbone, title=title, batch_window_ms=batch_window_ms, max_batch_size=max_batch_size,
+    )
     uvicorn.run(app, host=host, port=port, log_level=log_level)
