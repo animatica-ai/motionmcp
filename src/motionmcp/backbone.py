@@ -17,7 +17,7 @@ from __future__ import annotations
 import abc
 import inspect
 from dataclasses import dataclass, field
-from typing import Awaitable, Optional, Sequence
+from typing import Awaitable, Hashable, Optional, Sequence
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
@@ -231,6 +231,19 @@ class Backbone(abc.ABC):
         May be implemented as either ``def`` or ``async def``.
         """
         raise NotImplementedError
+
+    def batch_key(self, request: GenerateRequest) -> Hashable:
+        """Optional: what this request must share with another to batch with it.
+
+        A server with a batch window (``build_app(batch_window_ms=...)``) holds
+        arriving requests for a moment and hands those with an equal key to
+        :meth:`generate_batch` in one call. The default — ``None`` for every
+        request — lets any two of this model's requests share a call, which is
+        right when :meth:`generate_batch` sorts out the incompatible ones
+        itself. Return the settings one call fixes for the whole batch (step
+        count, guidance, clip length) to have the SDK keep them apart instead.
+        """
+        return None
 
     # Optional hook: called once at server startup. Use it to load model
     # weights, allocate GPU buffers, warm caches.

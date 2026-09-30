@@ -90,6 +90,25 @@ Run it under your usual ASGI deployment:
 uvicorn server:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
+## Batching requests from several clients
+
+By default each `POST /generate` runs on its own. A model that answers several
+requests in one pass can be fed by a batch window: every arriving request waits
+up to `batch_window_ms`, and the ones that share a
+[`batch_key()`](./backbone#batch_keyrequest) go to
+[`generate_batch()`](./backbone#generate_batchrequests) together.
+
+```python
+app = build_app(MyBackbone(), batch_window_ms=40, max_batch_size=8)
+```
+
+`serve()` takes both too. The window costs every request that much latency, so
+it earns its keep only when the model is genuinely cheaper in a batch — measure
+before turning it on. `max_batch_size` never rises above the model's own
+`limits.max_batch_size`; requests over the cap wait for the next window instead
+of being refused, and a queued request has no deadline of its own (the client's
+timeout is the one that matters).
+
 ## Mounting under a path prefix
 
 The MMCP routes are bare paths (`/capabilities`, `/generate`). To put

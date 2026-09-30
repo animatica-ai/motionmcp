@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.11.0
+
+Server-side batching: several clients' requests in one model pass.
+
+### Added
+
+- `build_app(batch_window_ms=..., max_batch_size=...)` and the same two
+  arguments on `serve()`. Above zero, an arriving `POST /generate` waits that
+  long for others to share its pass and the compatible ones go to
+  `Backbone.generate_batch` in one call; zero (the default) answers every
+  request on its own, as before. Requests over `max_batch_size` (never above
+  the model's own `limits.max_batch_size`) wait for the next window rather
+  than being refused, and a queued request keeps no deadline of its own.
+- `Backbone.batch_key(request)`: what a request must share with another to
+  batch with it. The default returns `None` for every request, letting any two
+  of that model's requests share a pass.
+
 ## 0.10.0
 
 MMCP protocol 1.2: motion and video references as prompts.

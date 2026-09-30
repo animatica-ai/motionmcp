@@ -96,7 +96,7 @@ __all__ = [
     "serve",
 ]
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 
 
 def __getattr__(name):
