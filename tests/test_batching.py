@@ -6,12 +6,14 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from fastapi.testclient import TestClient
 
-from motionmcp import build_app
-from motionmcp.null_backbone import NullBackbone
-
+pytest.importorskip("fastapi", reason="needs the [server] extras")
 httpx = pytest.importorskip("httpx", reason="needs the [dev] extras")
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from motionmcp import build_app  # noqa: E402
+from motionmcp.null_backbone import NullBackbone  # noqa: E402
 
 
 class _CountingBackbone(NullBackbone):
