@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.11.0
+
+MMCP protocol 1.3: the ground under the character.
+
+### Added
+
+- `ground_height` constraint (`GroundHeightConstraint`): `points`, world
+  positions `[x, z, y]` on the surface the character moves over, so a route
+  can drop from one roof onto a lower one instead of being walked at Y=0 in
+  the air. Places, not frames: a server stands what is planted on the ground
+  found under it wherever the motion goes, so it is not checked against the
+  take's frames. Gaps are left out. Points must be finite (422).
+- Opt-in: models list `"ground_height"` in `supported_constraints`; the
+  existing gate refuses it with `unsupported_constraint` elsewhere.
+  `motionmcp.protocol.OPTIONAL_CONSTRAINTS` names it.
+
 ## 0.10.0
 
 MMCP protocol 1.2: motion and video references as prompts.

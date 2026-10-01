@@ -27,7 +27,7 @@ def test_capabilities_shape(client: TestClient) -> None:
     r = client.get("/capabilities")
     assert r.status_code == 200
     body = r.json()
-    assert body["protocol_version"] == "1.2"
+    assert body["protocol_version"] == "1.3"
     assert body["coordinate_system"] == "right_handed_y_up"
     assert body["units"] == "meters"
     assert body["rotation_format"] == "quaternion_xyzw"

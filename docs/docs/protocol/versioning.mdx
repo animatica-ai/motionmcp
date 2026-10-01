@@ -16,6 +16,11 @@ sidebar_position: 1
 
 ## Changes by version
 
+- **1.3** — the optional [`ground_height`](../concepts/constraints#ground_height)
+  constraint: points on the ground the character moves over, so a route can
+  step or drop between levels. Opt-in: servers list
+  `"ground_height"` in `supported_constraints`; a server that doesn't keeps
+  refusing it with `unsupported_constraint`, and a 1.2 client never sends it.
 - **1.2** — references as prompts, each composing exactly like a text
   segment: the [`motion_reference`](../concepts/segments#motionreferencesegment--type-motion_reference)
   segment (a clip as the prompt) with `limits.max_reference_frames`, and

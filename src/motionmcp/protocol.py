@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 
-PROTOCOL_VERSION = "1.2"
+PROTOCOL_VERSION = "1.3"
 PROTOCOL_MAJOR = 1
 
 ROTATION_FORMAT = "quaternion_xyzw"
@@ -14,6 +14,9 @@ UNITS = "meters"
 RESPONSE_FORMATS = ["gltf_2.0_json"]
 
 SUPPORTED_CONSTRAINTS = ["root_path", "effector_target", "pose_keyframe"]
+# Optional constraint types a backbone opts into by listing them in its
+# ``ModelSpec.supported_constraints`` (the null backbone does not).
+OPTIONAL_CONSTRAINTS = ["ground_height"]   # 1.3
 
 # The two segment types every conforming server supports. ``"pose"`` is an
 # optional extension — backbones that have a specialized text-to-pose model
