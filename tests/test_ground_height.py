@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
-from pydantic import ValidationError
+
+pytest.importorskip("fastapi", reason="needs the [server] extras")
+
+from fastapi.testclient import TestClient  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
 
 from motionmcp import GenerateRequest, GroundHeightConstraint, ModelSpec, build_app
 from motionmcp.null_backbone import NullBackbone
