@@ -545,7 +545,9 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
                 if j not in skeleton_joint_names:
                     raise unknown_joint(j, sorted(skeleton_joint_names))
 
-        # Frame range check.
+        # Frame range check. The ground is places, not frames.
+        if c.type == "ground_height":
+            continue
         frames = [c.frame] if c.type == "pose_keyframe" else c.frames
         for f in frames:
             if not (0 <= f < total_frames):

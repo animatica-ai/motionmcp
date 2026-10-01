@@ -384,8 +384,35 @@ class PoseKeyframeConstraint(BaseModel):
     fill_mode: Literal["rest", "generate"] = "generate"
 
 
+class GroundHeightConstraint(BaseModel):
+    """The ground the character moves over, as points on its surface (MMCP 1.3).
+
+    ``points`` are world positions ``(x, z, y)`` -- ``x`` and ``z`` on the floor
+    plane, ``y`` the height of the surface there (a roof, a stair, the lower
+    street), in metres, in the same frame as ``root_position``. Without it a
+    model assumes one flat floor at Y=0, so a route that drops off one roof
+    onto a lower one is walked at the old height, in the air.
+
+    It describes the ground, not the character, and places, not frames: a
+    server keeps whatever the character does (a walk, a crouch, a jump) and
+    stands whatever is planted on the ground found under it, wherever the
+    motion actually puts it. Sample along the route and a little either side
+    of it; leave out the gaps -- where there is nothing to stand on, so no
+    point -- and a server treats a foot over one as in the air. A server looks
+    up the nearest point to each planted foot and ignores points too far from
+    it to be under it.
+
+    Servers advertise support by listing ``"ground_height"`` in
+    ``supported_constraints``; others refuse it with ``unsupported_constraint``.
+    """
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["ground_height"]
+    points: list[FiniteVec3] = Field(..., min_length=1)
+
+
 Constraint = Annotated[
-    Union[RootPathConstraint, EffectorTargetConstraint, PoseKeyframeConstraint],
+    Union[RootPathConstraint, EffectorTargetConstraint, PoseKeyframeConstraint,
+          GroundHeightConstraint],
     Field(discriminator="type"),
 ]
 

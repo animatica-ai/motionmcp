@@ -49,6 +49,7 @@ _SERVER_EXPORTS: dict[str, str] = {
     "Joint": ".schemas",
     "MotionReferenceSegment": ".schemas",
     "Options": ".schemas",
+    "GroundHeightConstraint": ".schemas",
     "PoseKeyframeConstraint": ".schemas",
     "PoseSegment": ".schemas",
     "RootPathConstraint": ".schemas",
@@ -77,6 +78,7 @@ __all__ = [
     "MotionResult",
     "Options",
     "PROTOCOL_VERSION",
+    "GroundHeightConstraint",
     "PoseKeyframeConstraint",
     "PoseSegment",
     "ProtocolError",
@@ -96,7 +98,7 @@ __all__ = [
     "serve",
 ]
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 
 
 def __getattr__(name):

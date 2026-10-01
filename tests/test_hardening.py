@@ -299,7 +299,7 @@ def test_batch_items_are_capped_by_their_own_model() -> None:
 def test_capabilities_unchanged_for_an_old_backbone() -> None:
     before = json.loads((Path(__file__).parent / "capabilities_0_9_null.json").read_text())
     now = TestClient(build_app(NullBackbone())).get("/capabilities").json()
-    assert now["protocol_version"] == PROTOCOL_VERSION == "1.2"
+    assert now["protocol_version"] == PROTOCOL_VERSION == "1.3"
     assert now["models"][0].pop("supports_motion_reference_mixed") is False
     before.pop("protocol_version")
     now.pop("protocol_version")
