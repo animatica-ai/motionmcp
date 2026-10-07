@@ -163,6 +163,16 @@ class MotionResult:
     rotations: np.ndarray
     root_translations: np.ndarray
     translations: Optional[np.ndarray] = None
+    # WHERE THE CURVES ACTUALLY BEND. {joint index: {"rotation": [frame, ...],
+    # "translation": [...]}} -- the frames a channel is worth keying, for a
+    # model that knows. Leave it out and every frame is keyed, which is exact
+    # and is what a take being retargeted wants; fill it in and what arrives
+    # in the DCC is a curve an animator can hold, keyed where it turns.
+    #
+    # The model chooses, because only the model knows what straightening its
+    # own curve costs. An encoder sees quaternions and cannot tell which of
+    # them a long chain is about to multiply into a visible error.
+    keyframes: Optional[dict] = None
     joint_names: Sequence[str] | None = None
     foot_contacts: dict[str, np.ndarray] = field(default_factory=dict)
     chunk_boundaries: Sequence[Sequence[int]] | None = None

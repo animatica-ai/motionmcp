@@ -201,6 +201,7 @@ def build_app(
             # never told to expect the channels
             translations=(result.translations
                           if spec.supports_joint_translation else None),
+            keyframes=result.keyframes,
             fps=fps,
             model_id=spec.id,
             foot_contacts=result.foot_contacts or None,
