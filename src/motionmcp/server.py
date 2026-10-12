@@ -520,6 +520,17 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
     _validate_motion_reference(req, spec)
     _validate_video_reference(req, spec)
 
+    # Thinning the curves: only where the backbone says it can. Ignoring it
+    # would be worse than refusing -- the caller would get a dense answer and
+    # no way to tell that the number it sent went nowhere.
+    if req.options is not None and req.options.keyframe_budget is not None:
+        if not getattr(spec, "supports_keyframe_reduction", False):
+            raise ProtocolError(
+                "invalid_options",
+                "this model does not support options.keyframe_budget",
+                details={"model": spec.id},
+            )
+
     # Looping: only where the backbone says it can, and over one segment.
     if req.options is not None and req.options.loop:
         if not getattr(spec, "supports_loop", False):

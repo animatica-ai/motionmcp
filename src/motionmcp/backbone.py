@@ -85,6 +85,9 @@ class ModelSpec(BaseModel):
     # should only set ``loop`` when this is advertised; the SDK rejects it
     # otherwise.
     supports_loop: bool = False
+    # The model can thin its own curves to a tolerance the request names, and
+    # will key every frame when it does not. See ``Options.keyframe_budget``.
+    supports_keyframe_reduction: bool = False
     # ``motion_reference`` segments are prompts like text segments (MMCP 1.2):
     # several in one request, mixed with ``text`` / ``unconditioned`` ones.
     # Implied by ``"motion_reference"`` in ``supported_segments`` -- the SDK
