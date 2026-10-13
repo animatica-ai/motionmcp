@@ -196,6 +196,12 @@ def build_app(
             joint_names=joint_names,
             rotations_quat=result.rotations,
             root_translations=result.root_translations,
+            # only if the model says it sends them; a backbone that fills the
+            # field without advertising it is a backbone whose clients were
+            # never told to expect the channels
+            translations=(result.translations
+                          if spec.supports_joint_translation else None),
+            keyframes=result.keyframes,
             fps=fps,
             model_id=spec.id,
             foot_contacts=result.foot_contacts or None,
@@ -513,6 +519,17 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
     # payload (a clip's joints and length, a video's size and trimmed length).
     _validate_motion_reference(req, spec)
     _validate_video_reference(req, spec)
+
+    # Thinning the curves: only where the backbone says it can. Ignoring it
+    # would be worse than refusing -- the caller would get a dense answer and
+    # no way to tell that the number it sent went nowhere.
+    if req.options is not None and req.options.keyframe_budget is not None:
+        if not getattr(spec, "supports_keyframe_reduction", False):
+            raise ProtocolError(
+                "invalid_options",
+                "this model does not support options.keyframe_budget",
+                details={"model": spec.id},
+            )
 
     # Looping: only where the backbone says it can, and over one segment.
     if req.options is not None and req.options.loop:

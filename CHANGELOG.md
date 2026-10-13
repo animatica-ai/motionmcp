@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.12.0
+
+MMCP protocol 1.4: joints that move, and curves keyed where they bend.
+
+### Added
+
+- `supports_joint_translation` (capability) and `MotionResult.translations`,
+  `(B, T, J, 3)`: a joint's offset from its parent, in the parent's frame. For
+  a rig that deforms by sliding joints -- a face, a fin membrane, a tongue --
+  which rotations and a root cannot carry. The response gets a glTF
+  `translation` channel for each joint that leaves its rest offset, and no
+  other. The server drops the channels for a model that does not advertise
+  the capability, so a client is never sent what it was not told to expect.
+- `MotionResult.keyframes`: `{joint index: {"rotation": [frame, ...],
+  "translation": [...]}}`, the frames a channel is worth keying. Those
+  samplers get an `input` accessor of their own; a channel the model says
+  nothing about stays keyed on every frame. Additive: a model that leaves it
+  out produces the same channels as before.
+- `options.keyframe_budget` (float > 0) and `supports_keyframe_reduction`
+  (capability): how far, in the model's world units, a thinned curve may put
+  any point from where the model put it. Omitted means key every frame. A
+  model that does not advertise reduction refuses it with `invalid_options`,
+  rather than ignore a number the caller has no way to see go nowhere.
+
+### Changed
+
+- `client.parse_gltf` / `parse_gltf_samples` put every track on the sample's
+  timeline (`MMCP_motion` `fps` and `num_frames`), slerping rotations and
+  interpolating translations between keys, as a glTF reader plays them. A
+  document keyed on every frame parses as before.
+- `client.parse_gltf` returns `local_translations` `[T, J, 3]`: each joint's
+  offset from its parent (the channel, or the rest offset where there is
+  none). `posed_joints` keeps meaning world positions and stays the root's.
+- Several samples in one response share one frame-clock accessor.
+
 ## 0.11.0
 
 MMCP protocol 1.3: the ground under the character.

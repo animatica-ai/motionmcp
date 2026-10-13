@@ -17,8 +17,16 @@ for `.glb`, per `Accept` negotiation.
 - A `nodes[]` hierarchy and `skins[]` definition mirroring the request's
   skeleton (joint names preserved).
 - One `animations[]` entry per generated sample, named `sample_0`,
-  `sample_1`, … Each animation has dense per-frame channels with `LINEAR`
-  interpolation for joint rotations and the root translation.
+  `sample_1`, … Each animation has `LINEAR` channels for joint rotations
+  and the root translation (its world position). From a model with
+  `supports_joint_translation` (1.4) it also has a `translation` channel for
+  each other joint that leaves its rest offset: the offset from its parent,
+  in the parent's frame, as glTF defines a node's translation.
+- Every sampler names its own `input` accessor. Channels are keyed on every
+  frame unless the model chose keys (1.4): such a channel holds only those
+  frames, and a reader interpolates between them as glTF specifies (slerp
+  for rotations), holding the first and last key outside them. Don't assume
+  channels share timestamps; the frame count is `MMCP_motion.samples[].num_frames`.
 - Buffers / bufferViews / accessors backing the animation data. In the
   JSON variant, buffers are embedded as `data:` URIs; in the binary
   variant they live in the GLB binary chunk (no base64 overhead).

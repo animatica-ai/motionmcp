@@ -119,12 +119,31 @@ MotionResult(
 )
 ```
 
+### `translations: np.ndarray | None` — `(B, T, J, 3)` float32
+
+*1.4.* A joint's offset from its parent, in the parent's frame — what glTF
+means by a node's translation, and what `rest_translation` is when nothing
+has moved. For the root it is the world position. Set it for a rig that
+deforms by sliding joints (a face, a fin membrane), and advertise
+`supports_joint_translation`; without the capability the server drops the
+channels. A joint that stays at its rest offset gets no channel.
+
+### `keyframes: dict | None`
+
+*1.4.* `{joint index: {"rotation": [frame, ...], "translation": [...]}}` —
+the frames each channel is worth keying. Those channels are written at
+those frames only; any channel left out is keyed on every frame. The model
+chooses, because only the model knows what straightening its own curve
+costs. When the request carries `options.keyframe_budget` (and the model
+advertises `supports_keyframe_reduction`), this is where the thinning goes.
+
 ## Validation
 
 The dataclass `__post_init__` validates the shapes against each other:
 
 - `rotations` is `(B, T, J, 4)` and `root_translations` is `(B, T, 3)` —
   `B` and `T` must match.
+- `translations`, when set, is `(B, T, J, 3)`.
 - Each `foot_contacts[name]` is `(B, T)`.
 
 Mismatches raise `ValueError` immediately, before the SDK encodes

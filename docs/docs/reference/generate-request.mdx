@@ -52,9 +52,12 @@ accepts any skeleton.
 | `transition_frames` | int (0–60) | 5 | Blend window between segments. Rotations blend via slerp; root translation blends linearly |
 | `guidance.type` | `"nocfg"` \| `"regular"` \| `"separated"` | backbone default | Classifier-free guidance mode |
 | `guidance.weight` | float[] | backbone default | Length 1 for `regular`, length 2 for `separated`, length 0 (or omitted) for `nocfg` |
+| `keyframe_budget` | float (> 0) \| null | null | *1.4.* How far, in the model's world units, a thinned curve may put any point of the character from where the model put it. `null` keys every frame, which is exact and what a take being retargeted wants; a budget gives curves an animator can edit. Only for a model with `supports_keyframe_reduction` |
 
 Backbones that don't implement an option MAY ignore it; they MUST NOT
-fail.
+fail. The exceptions are the options a model advertises: `loop` and
+`keyframe_budget` are refused with `invalid_options` by a model that does
+not, since a caller who sent one has no other way to learn it went nowhere.
 
 :::note[Reproducibility caveat]
 Re-sending an identical request with the same `seed` and `num_samples`

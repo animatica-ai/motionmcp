@@ -3,7 +3,11 @@
 
 Builds a self-contained glTF (buffers embedded as ``data:`` URIs) with one
 animation per generated sample. Each animation has dense per-frame ``LINEAR``
-channels: a quaternion track per joint, plus a translation track on the root.
+channels: a quaternion track per joint, a translation track on the root, and --
+for a rig that deforms by MOVING joints rather than turning them -- a
+translation track on any other joint that does not simply sit at its rest
+offset. A reader that ignores those still gets a correct skeleton, turned
+right and placed right; it gets a stiffer one.
 
 The MMCP-specific metadata (model id, fps, foot contacts, sample frame counts,
 chunk boundaries, travel trajectories) lives in ``extensions.MMCP_motion``.
@@ -200,7 +204,9 @@ def build_gltf(
     joint_names: Sequence[str],
     rotations_quat: np.ndarray,                                 # (B, T, J, 4) (x,y,z,w)
     root_translations: np.ndarray,                              # (B, T, 3)
-    fps: float,
+    translations: np.ndarray | None = None,                     # (B, T, J, 3)
+    keyframes: 'dict[int, dict[str, Sequence[int]]] | None' = None,
+    fps: float = 30.0,
     model_id: str,
     foot_contacts: dict[str, np.ndarray] | None = None,         # {joint_name: (B, T) bool}
     chunk_boundaries: Sequence[Sequence[int]] | None = None,    # per-sample int lists
@@ -244,6 +250,11 @@ def build_gltf(
             f"rotations_quat must be (B, T, J, 4); got {rotations_quat.shape}"
         )
     B, T, J, _ = rotations_quat.shape
+    if translations is not None and translations.shape != (B, T, J, 3):
+        raise ValueError(
+            f"translations must be (B={B}, T={T}, J={J}, 3); "
+            f"got {translations.shape}"
+        )
     if root_translations.shape != (B, T, 3):
         raise ValueError(
             f"root_translations must be (B={B}, T={T}, 3); "
@@ -268,21 +279,52 @@ def build_gltf(
 
     timestamps = (np.arange(T, dtype=_F32) / float(fps))
 
+    # A CHANNEL MAY BE KEYED WHERE IT BENDS AND NOWHERE ELSE. `keyframes` maps
+    # a joint index to the frames its rotation and translation are worth
+    # keying; every other frame is what the reader works out between them. A
+    # joint the caller says nothing about stays dense, so a model that has no
+    # opinion about its keys behaves exactly as before.
+    #
+    # The frames are the MODEL's to choose, not this encoder's: only the model
+    # knows what its own curves cost to straighten, and knowing the animation
+    # is not the same as knowing the rig it will move.
+    def _ix(j: int, path: str) -> "np.ndarray | None":
+        if keyframes is None:
+            return None
+        f = (keyframes.get(j) or {}).get(path)
+        if f is None:
+            return None
+        f = np.unique(np.asarray(f, dtype=np.int64).clip(0, T - 1))
+        return f if len(f) else None
+
     bb = _BufferBuilder()
     animations: list[dict[str, Any]] = []
+    _ts_cache: dict[bytes, int] = {}
+
+    def _ts_for(ix: "np.ndarray | None") -> int:
+        t = timestamps if ix is None else timestamps[ix]
+        k = t.tobytes()
+        if k not in _ts_cache:
+            _ts_cache[k] = bb.add(t, kind="SCALAR", with_min_max=True)
+        return _ts_cache[k]
 
     for b in range(B):
-        ts_acc = bb.add(timestamps, kind="SCALAR", with_min_max=True)
+        # Made up front, used or not, so the frame clock is the document's
+        # first accessor as it always was.
+        _ts_for(None)
 
         samplers: list[dict[str, Any]] = []
         channels: list[dict[str, Any]] = []
 
         # One rotation channel per joint.
         for j in range(J):
-            quat_acc = bb.add(rotations_quat[b, :, j, :], kind="VEC4")
+            ix = _ix(j, "rotation")
+            track = (rotations_quat[b, :, j, :] if ix is None
+                     else rotations_quat[b, ix, j, :])
+            quat_acc = bb.add(track, kind="VEC4")
             sampler_idx = len(samplers)
             samplers.append({
-                "input":         ts_acc,
+                "input":         _ts_for(ix),
                 "output":        quat_acc,
                 "interpolation": "LINEAR",
             })
@@ -291,11 +333,13 @@ def build_gltf(
                 "target":  {"node": j, "path": "rotation"},
             })
 
-        # One translation channel for the root.
-        root_acc = bb.add(root_translations[b], kind="VEC3")
+        # One translation channel for the root: where the character is.
+        _rix = _ix(root_idx, "translation")
+        root_acc = bb.add(root_translations[b] if _rix is None
+                          else root_translations[b][_rix], kind="VEC3")
         sampler_idx = len(samplers)
         samplers.append({
-            "input":         ts_acc,
+            "input":         _ts_for(_rix),
             "output":        root_acc,
             "interpolation": "LINEAR",
         })
@@ -303,6 +347,33 @@ def build_gltf(
             "sampler": sampler_idx,
             "target":  {"node": root_idx, "path": "translation"},
         })
+
+        # AND ONE FOR EVERY JOINT THAT IS MOVED RATHER THAN TURNED. A joint
+        # that stays at its rest offset needs no channel and gets none -- on a
+        # rig of 357 joints that is nearly all of them, so this costs the file
+        # only the joints that use it. The root already has its own above.
+        if translations is not None:
+            rest = np.asarray(
+                [j.get("rest_translation", (0.0, 0.0, 0.0))
+                 for j in skeleton["joints"]], dtype=np.float32)
+            for j in range(J):
+                if j == root_idx:
+                    continue
+                track = np.asarray(translations[b, :, j, :], dtype=np.float32)
+                if np.allclose(track, rest[j], atol=1e-6):
+                    continue
+                ix = _ix(j, "translation")
+                acc = bb.add(track if ix is None else track[ix], kind="VEC3")
+                sampler_idx = len(samplers)
+                samplers.append({
+                    "input":         _ts_for(ix),
+                    "output":        acc,
+                    "interpolation": "LINEAR",
+                })
+                channels.append({
+                    "sampler": sampler_idx,
+                    "target":  {"node": j, "path": "translation"},
+                })
 
         animations.append({
             "name":     f"sample_{b}",

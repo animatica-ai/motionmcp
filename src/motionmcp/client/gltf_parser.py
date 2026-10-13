@@ -10,8 +10,14 @@ glTF animation conventions used by the MMCP server:
     the server returns N entries, all sharing the same node/channel structure.
     ``parse_gltf`` returns the first; ``parse_gltf_samples`` returns all N.
   - ``channels[*].target.path == "rotation"``   → XYZW quaternions, local space.
-  - ``channels[*].target.path == "translation"`` → XYZ meters, world space
-    (root joint only).
+  - ``channels[*].target.path == "translation"`` → XYZ meters. On the root it
+    is the world position; on any other joint (MMCP 1.4, from a model that
+    advertises ``supports_joint_translation``) it is the joint's offset from
+    its parent, in the parent's frame.
+  - Every sampler is ``LINEAR`` and has its own ``input`` accessor. Since MMCP
+    1.4 a channel may be keyed on some frames only; it is resampled onto the
+    sample's whole timeline (slerp for rotations), which is what a glTF reader
+    plays back, so every track comes out ``num_frames`` long.
   - Buffer data is embedded as base64 data URIs.
   - Node names are the SOMA-77 joint names.
   - The ``MMCP_motion`` extension pairs ``samples[i]`` with ``animations[i]``;
@@ -68,6 +74,12 @@ def parse_gltf(gltf_doc):
         dict with keys:
             ``local_rot_mats`` – np.ndarray [T, J, 3, 3]
             ``posed_joints``   – np.ndarray [T, J, 3]  world positions, meters
+                                 (the root's; zero for the other joints)
+            ``local_translations`` – np.ndarray [T, J, 3]  each joint's offset
+                                 from its parent, in the parent's frame: the
+                                 channel where the server sent one, the rest
+                                 offset where it did not; the root's is its
+                                 world position
             ``fps``            – float
             ``num_frames``     – int
             ``num_joints``     – int
@@ -112,9 +124,10 @@ def parse_gltf_samples(gltf_doc):
     nodes       = gltf_doc.get("nodes", [])
     anims       = gltf_doc["animations"]
 
-    ext_samples = (gltf_doc.get("extensions", {})
-                           .get("MMCP_motion", {})
-                           .get("samples", []))
+    ext = gltf_doc.get("extensions", {}).get("MMCP_motion", {})
+    ext = ext if isinstance(ext, dict) else {}
+    ext_fps = ext.get("fps")
+    ext_samples = ext.get("samples", [])
     if not isinstance(ext_samples, list) or len(ext_samples) != len(anims):
         ext_samples = [{}] * len(anims)   # absent / mismatched → no contacts
 
@@ -123,22 +136,26 @@ def parse_gltf_samples(gltf_doc):
 
     out = []
     for anim, sample in zip(anims, ext_samples):
+        sample = sample if isinstance(sample, dict) else {}
         motion = _parse_animation(
             anim, nodes, read_acc,
-            sample.get("foot_contacts") if isinstance(sample, dict) else None,
+            sample.get("foot_contacts"),
+            clock=(ext_fps, sample.get("num_frames")),
         )
         # The travel trajectory, as the server sent it (glTF frame): None from
         # servers without supports_trajectory.
-        motion["trajectory"] = sample.get("trajectory") if isinstance(sample, dict) else None
+        motion["trajectory"] = sample.get("trajectory")
         out.append(motion)
     return out
 
 
-def _parse_animation(anim, nodes, read_acc, contacts=None):
+def _parse_animation(anim, nodes, read_acc, contacts=None, clock=(None, None)):
     """Parse one ``animations[]`` entry into a ``motion_data`` dict.
 
     *contacts* is the sample's raw ``foot_contacts`` wire dict
     (``dict[str, list[bool]]`` keyed by joint name) or ``None``.
+    *clock* is ``(fps, num_frames)`` from the ``MMCP_motion`` extension, either
+    possibly ``None``; the timeline every track is resampled onto.
     """
     rot_tracks   = {}  # node_idx -> (times [T], xyzw [T, 4])
     trans_tracks = {}  # node_idx -> (times [T], xyz  [T, 3])
@@ -158,30 +175,32 @@ def _parse_animation(anim, nodes, read_acc, contacts=None):
         raise ValueError("glTF animation has no rotation channels")
 
     sorted_nodes = sorted(rot_tracks)
-    first_times  = rot_tracks[sorted_nodes[0]][0]
-    num_frames   = int(first_times.shape[0])
     num_joints   = len(sorted_nodes)
+    grid, fps    = _timeline(clock, [t for t, _ in (*rot_tracks.values(),
+                                                    *trans_tracks.values())])
+    num_frames   = int(grid.shape[0])
+    rot_tracks   = {ni: _slerp_onto(t, q, grid) for ni, (t, q) in rot_tracks.items()}
+    trans_tracks = {ni: _lerp_onto(t, v, grid) for ni, (t, v) in trans_tracks.items()}
 
     joint_names = [
         nodes[ni]["name"] if ni < len(nodes) else str(ni)
         for ni in sorted_nodes
     ]
 
-    local_rot_mats = np.zeros((num_frames, num_joints, 3, 3), dtype=np.float32)
-    posed_joints   = np.zeros((num_frames, num_joints, 3),    dtype=np.float32)
+    local_rot_mats     = np.zeros((num_frames, num_joints, 3, 3), dtype=np.float32)
+    posed_joints       = np.zeros((num_frames, num_joints, 3),    dtype=np.float32)
+    local_translations = np.zeros((num_frames, num_joints, 3),    dtype=np.float32)
 
+    # The root is the joint no node names as a child. Only its translation is a
+    # world position; any other joint's is an offset from its parent, which
+    # `posed_joints` (world positions) must not be handed.
+    children = {c for n in nodes for c in n.get("children", ())}
     for j, ni in enumerate(sorted_nodes):
-        _, xyzw = rot_tracks[ni]
-        local_rot_mats[:, j] = xyzw_to_rotmat(xyzw)
-        if ni in trans_tracks:
-            posed_joints[:, j] = trans_tracks[ni][1]
-
-    # Infer FPS from uniform time steps; fall back to 30 when ambiguous.
-    if num_frames > 1:
-        dt  = float(first_times[-1] - first_times[0]) / (num_frames - 1)
-        fps = 1.0 / dt if dt > 1e-9 else 30.0
-    else:
-        fps = 30.0
+        local_rot_mats[:, j] = xyzw_to_rotmat(rot_tracks[ni])
+        rest = nodes[ni].get("translation", (0.0, 0.0, 0.0)) if ni < len(nodes) else (0, 0, 0)
+        local_translations[:, j] = trans_tracks.get(ni, np.asarray(rest, dtype=np.float32))
+        if ni in trans_tracks and ni not in children:
+            posed_joints[:, j] = trans_tracks[ni]
 
     # Foot contacts: mapped BY NAME from the wire dict into joint_names order,
     # never by position — the full-joint bool axis avoids inventing a second
@@ -202,6 +221,7 @@ def _parse_animation(anim, nodes, read_acc, contacts=None):
     return {
         "local_rot_mats": local_rot_mats,
         "posed_joints":   posed_joints,
+        "local_translations": local_translations,
         "fps":            fps,
         "num_frames":     num_frames,
         "num_joints":     num_joints,
@@ -215,6 +235,64 @@ def _parse_animation(anim, nodes, read_acc, contacts=None):
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _timeline(clock, track_times):
+    """The frame times every track is put on, and the fps they imply.
+
+    The extension states the clock outright, and is trusted when it does. A
+    document without it (a pre-1.4 capture, a hand-built one) is keyed on every
+    frame, so its longest input is the clock; fps is inferred from its steps,
+    30 when that is ambiguous.
+    """
+    fps, num_frames = clock
+    if isinstance(fps, (int, float)) and fps > 0 \
+            and isinstance(num_frames, int) and num_frames > 0:
+        return np.arange(num_frames, dtype=np.float32) / np.float32(fps), float(fps)
+    grid = max(track_times, key=len)
+    if len(grid) > 1:
+        dt = float(grid[-1] - grid[0]) / (len(grid) - 1)
+        return grid, (1.0 / dt if dt > 1e-9 else 30.0)
+    return grid, 30.0
+
+
+def _same_times(times, grid):
+    return times.shape == grid.shape and np.allclose(times, grid, atol=1e-6)
+
+
+def _lerp_onto(times, values, grid):
+    """A LINEAR track at *grid*: held before its first key and after its last."""
+    values = np.asarray(values, dtype=np.float32)
+    if _same_times(times, grid):
+        return values
+    return np.stack([np.interp(grid, times, values[:, k])
+                     for k in range(values.shape[1])], axis=1).astype(np.float32)
+
+
+def _slerp_onto(times, quats, grid):
+    """A LINEAR rotation track at *grid*: glTF interpolates rotations by slerp,
+    along the shorter arc, and holds them outside the keyed range."""
+    quats = np.asarray(quats, dtype=np.float32)
+    if _same_times(times, grid):
+        return quats
+    if len(times) == 1:
+        return np.repeat(quats, len(grid), axis=0)
+    g = np.clip(grid, times[0], times[-1])
+    i = np.clip(np.searchsorted(times, g, side="right") - 1, 0, len(times) - 2)
+    span = times[i + 1] - times[i]
+    u = ((g - times[i]) / np.where(span > 0, span, 1.0)).astype(np.float64)[:, None]
+    q0 = quats[i].astype(np.float64)
+    q1 = quats[i + 1].astype(np.float64)
+    dot = np.sum(q0 * q1, axis=1, keepdims=True)
+    q1 = np.where(dot < 0, -q1, q1)
+    theta = np.arccos(np.clip(np.abs(dot), 0.0, 1.0))
+    sin = np.sin(theta)
+    near = sin < 1e-6                    # (nearly) the same rotation: lerp is exact
+    safe = np.where(near, 1.0, sin)
+    w0 = np.where(near, 1.0 - u, np.sin((1.0 - u) * theta) / safe)
+    w1 = np.where(near, u, np.sin(u * theta) / safe)
+    q = w0 * q0 + w1 * q1
+    return (q / np.linalg.norm(q, axis=1, keepdims=True)).astype(np.float32)
+
 
 def _node_rest_geometry(nodes, sorted_nodes, joint_names):
     """Joint hierarchy + world-space rest positions from the glTF ``nodes[]``.

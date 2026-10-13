@@ -448,6 +448,18 @@ class Options(BaseModel):
     # cycle's travel), so repeating it has no seam. One segment only. Only send
     # it to a model that advertises ``supports_loop``.
     loop: bool = False
+    # HOW MUCH THE CURVES MAY BE THINNED, and by default not at all. A key on
+    # every frame is exact, and exact is what a take being retargeted wants --
+    # at one-frame spacing the tangents have nothing left to argue about. It is
+    # the wrong answer for anyone who has to OPEN the result: a curve keyed
+    # everywhere can be rebaked and nothing else.
+    #
+    # Which of those you want is not the server's to guess, so it is asked for
+    # here. The number is a tolerance in the model's own world units -- how far
+    # any point on the character may end up from where the model put it -- and
+    # omitting it keys every frame. Only send it to a model that advertises
+    # ``supports_keyframe_reduction``.
+    keyframe_budget: Optional[float] = Field(None, gt=0)
 
 
 # ---- Timing ---------------------------------------------------------------

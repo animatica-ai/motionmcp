@@ -68,6 +68,14 @@ class ModelSpec(BaseModel):
     canonical_skeleton: Skeleton
 
     supports_retargeting: bool = False
+    # True when a response may carry a translation for joints other than the
+    # root (``MotionResult.translations``). A rig whose joints are turned
+    # rather than slid never needs it; one that DEFORMS by moving joints --
+    # a face, a fin membrane, a tongue -- cannot be carried without it, and a
+    # client that ignores the extra channels still gets a correct skeleton,
+    # just a stiffer one. Off unless a backbone says otherwise, so a client
+    # that has never heard of it is unaffected.
+    supports_joint_translation: bool = False
     supports_async: bool = False
     # True when the backbone honours a per-segment ``seed`` (see
     # ``TextSegment.seed``). Clients should only attach per-segment seeds when
@@ -77,6 +85,9 @@ class ModelSpec(BaseModel):
     # should only set ``loop`` when this is advertised; the SDK rejects it
     # otherwise.
     supports_loop: bool = False
+    # The model can thin its own curves to a tolerance the request names, and
+    # will key every frame when it does not. See ``Options.keyframe_budget``.
+    supports_keyframe_reduction: bool = False
     # ``motion_reference`` segments are prompts like text segments (MMCP 1.2):
     # several in one request, mixed with ``text`` / ``unconditioned`` ones.
     # Implied by ``"motion_reference"`` in ``supported_segments`` -- the SDK
@@ -128,6 +139,13 @@ class MotionResult:
 
     * ``rotations``: ``(B, T, J, 4)`` quaternions ``(x, y, z, w)``, local-to-parent.
     * ``root_translations``: ``(B, T, 3)`` world-space root positions.
+    * ``translations``: optional ``(B, T, J, 3)``, a joint's offset from its
+      parent, in the parent's frame -- what glTF means by a node's
+      translation, and what ``rest_translation`` is when nothing has moved.
+      For the root it is the world position, which is the same thing. Leave it
+      None and only the root moves, which is every rig whose joints are
+      turned rather than slid; set it for a rig that DEFORMS by moving joints,
+      and say so with ``supports_joint_translation``.
     * ``joint_names``: optional ``(J,)`` list. Defaults to the request skeleton's
       joint order. Provide this only if your model retargeted internally and
       you need to declare a different output order — the SDK will validate
@@ -147,6 +165,17 @@ class MotionResult:
 
     rotations: np.ndarray
     root_translations: np.ndarray
+    translations: Optional[np.ndarray] = None
+    # WHERE THE CURVES ACTUALLY BEND. {joint index: {"rotation": [frame, ...],
+    # "translation": [...]}} -- the frames a channel is worth keying, for a
+    # model that knows. Leave it out and every frame is keyed, which is exact
+    # and is what a take being retargeted wants; fill it in and what arrives
+    # in the DCC is a curve an animator can hold, keyed where it turns.
+    #
+    # The model chooses, because only the model knows what straightening its
+    # own curve costs. An encoder sees quaternions and cannot tell which of
+    # them a long chain is about to multiply into a visible error.
+    keyframes: Optional[dict] = None
     joint_names: Sequence[str] | None = None
     foot_contacts: dict[str, np.ndarray] = field(default_factory=dict)
     chunk_boundaries: Sequence[Sequence[int]] | None = None
@@ -164,6 +193,11 @@ class MotionResult:
         if t.shape != (B, T, 3):
             raise ValueError(
                 f"root_translations must be ({B}, {T}, 3); got {t.shape}"
+            )
+        if self.translations is not None and self.translations.shape != (B, T, J, 3):
+            raise ValueError(
+                f"translations must be ({B}, {T}, {J}, 3); "
+                f"got {self.translations.shape}"
             )
         for joint, mask in self.foot_contacts.items():
             if mask.shape != (B, T):
