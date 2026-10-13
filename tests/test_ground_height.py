@@ -39,8 +39,8 @@ GROUND = {"type": "ground_height",
           "points": [[0.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 4.5, -0.6], [0.0, 7.0, -0.6]]}
 
 
-def test_protocol_is_1_3() -> None:
-    assert PROTOCOL_VERSION == "1.3"
+def test_ground_height_is_opt_in() -> None:
+    assert tuple(map(int, PROTOCOL_VERSION.split("."))) >= (1, 3)
     assert "ground_height" in OPTIONAL_CONSTRAINTS
     assert "ground_height" not in SUPPORTED_CONSTRAINTS
 

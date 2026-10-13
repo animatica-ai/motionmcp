@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 
-PROTOCOL_VERSION = "1.3"
+PROTOCOL_VERSION = "1.4"
 PROTOCOL_MAJOR = 1
 
 ROTATION_FORMAT = "quaternion_xyzw"

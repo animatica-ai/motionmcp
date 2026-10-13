@@ -55,6 +55,8 @@ request body. Response is a `Capabilities` object.
 | `supports_async` | bool | If `true`, server may return `202 Accepted` for long generations (see [Async](./async)) |
 | `supports_segment_seed` | bool | If `true`, the model honours a per-segment `seed` |
 | `supports_loop` | bool | If `true`, the model samples `Options.loop` as a seamless cycle (one segment) |
+| `supports_joint_translation` | bool | *1.4.* If `true`, the response may carry a `translation` channel for joints other than the root: the joint's offset from its parent, in the parent's frame (see [Response](./response#whats-in-it)). For a rig that deforms by sliding joints. A client that ignores them still gets a correct, stiffer pose |
+| `supports_keyframe_reduction` | bool | *1.4.* If `true`, the model honours `options.keyframe_budget` and thins its curves to it; otherwise the option is refused with `invalid_options` |
 | `supports_motion_reference_mixed` | bool | *1.2.* `true` exactly when the model lists `"motion_reference"` in `supported_segments` (a reference composes like a text segment), `false` otherwise |
 | `supports_trajectory` | bool | If `true`, every response sample carries its travel trajectory (`MMCP_motion.samples[].trajectory`, see [Response](./response#the-travel-trajectory)) |
 | `supports_batch` | bool | If `true`, `POST /generate` takes a batch body of up to `limits.max_batch_size` requests (see [Endpoints](./endpoints#batches)) |

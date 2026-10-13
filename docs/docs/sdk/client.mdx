@@ -265,7 +265,8 @@ Each `motion_data` dict holds:
 | Key | Shape / type | |
 |---|---|---|
 | `local_rot_mats` | `ndarray [T, J, 3, 3]` | Local joint rotations |
-| `posed_joints` | `ndarray [T, J, 3]` | World positions, meters |
+| `posed_joints` | `ndarray [T, J, 3]` | World positions, meters: the root's; zero for the other joints |
+| `local_translations` | `ndarray [T, J, 3]` | *0.12.* Each joint's offset from its parent, meters: the channel where the server sent one (1.4, `supports_joint_translation`), the rest offset where it did not; the root's world position for the root |
 | `fps` | `float` | |
 | `num_frames` | `int` | `T` |
 | `num_joints` | `int` | `J` |
@@ -276,6 +277,10 @@ Each `motion_data` dict holds:
 
 Missing foot contacts degrade to all-`False` rather than raising — the
 motion matters more than the metadata.
+
+Every track comes out `num_frames` long. A channel the model keyed on
+some frames only (1.4) is resampled onto the sample's timeline the way a
+glTF reader plays it — slerp for rotations, a line for translations.
 
 ## Where to go next
 
