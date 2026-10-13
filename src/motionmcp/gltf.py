@@ -309,7 +309,9 @@ def build_gltf(
         return _ts_cache[k]
 
     for b in range(B):
-        ts_acc = _ts_for(None)
+        # Made up front, used or not, so the frame clock is the document's
+        # first accessor as it always was.
+        _ts_for(None)
 
         samplers: list[dict[str, Any]] = []
         channels: list[dict[str, Any]] = []
