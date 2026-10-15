@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import base64
 import re
-from typing import Annotated, Literal, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 from pydantic_core import PydanticCustomError
@@ -435,6 +435,42 @@ class Guidance(BaseModel):
         return self
 
 
+class ModelOption(BaseModel):
+    """One dial a model exposes that the protocol has no word for.
+
+    MMCP names the things every model has -- a seed, a sample count, a
+    duration. It cannot name "how far his shoulder twist bends the body",
+    because that is one rig's vocabulary and the protocol would grow a field
+    per model forever. So a model DECLARES its own dials here and the request
+    sends values for them in ``options.model_options``.
+
+    IT IS A SMALL CLOSED VOCABULARY AND NOT JSON SCHEMA, deliberately. A
+    partial JSON Schema implementation is the worst of both: it looks like the
+    standard, and the keywords it has not implemented are ignored in silence --
+    so a model declares a bound nobody enforces and finds out from a bug
+    report. Five types are enough to describe a dial and all five can be
+    checked exactly, in about forty lines, with no dependency. A client can
+    also render them: this is enough to build a panel from.
+    """
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+    name: str = Field(..., pattern=r"^[a-z][a-z0-9_]{0,39}$")
+    type: Literal["number", "integer", "boolean", "enum", "flags"]
+    # What to call it and what it does, for a client building a panel.
+    title: Optional[str] = Field(None, max_length=80)
+    description: Optional[str] = Field(None, max_length=400)
+    # The value used when the request does not send one. A model is expected to
+    # behave the same whether the caller omits a dial or sends its default.
+    default: Any = None
+    # number/integer only. Both ends optional; a request outside them is
+    # refused rather than clamped, because a clamped value is a lie.
+    minimum: Optional[float] = None
+    maximum: Optional[float] = None
+    # enum: the permitted values, one of which is sent.
+    # flags: the permitted values, any subset of which is sent as a list.
+    values: Optional[list[str]] = Field(None, max_length=32)
+
+
 class Options(BaseModel):
     model_config = ConfigDict(extra="forbid")
     diffusion_steps: int = Field(100, ge=1, le=500)
@@ -460,6 +496,11 @@ class Options(BaseModel):
     # omitting it keys every frame. Only send it to a model that advertises
     # ``supports_keyframe_reduction``.
     keyframe_budget: Optional[float] = Field(None, gt=0)
+    # VALUES FOR THE DIALS THE MODEL DECLARED, by name -- see ``ModelOption``
+    # and the model's ``model_options`` in /capabilities. A name the model did
+    # not declare is refused, not ignored: a caller that sent a dial and got
+    # the default back has no way to tell that the dial went nowhere.
+    model_options: Optional[dict[str, Any]] = None
 
 
 # ---- Timing ---------------------------------------------------------------

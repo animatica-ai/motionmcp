@@ -27,7 +27,7 @@ from .protocol import (
     SUPPORTED_GUIDANCE_TYPES,
     SUPPORTED_SEGMENTS,
 )
-from .schemas import GenerateRequest, Skeleton
+from .schemas import GenerateRequest, ModelOption, Skeleton
 
 
 # ---- ModelSpec — published at /capabilities --------------------------------
@@ -88,6 +88,11 @@ class ModelSpec(BaseModel):
     # The model can thin its own curves to a tolerance the request names, and
     # will key every frame when it does not. See ``Options.keyframe_budget``.
     supports_keyframe_reduction: bool = False
+    # THE DIALS THIS MODEL HAS THAT THE PROTOCOL HAS NO WORD FOR. Declared
+    # here, published in /capabilities, and sent back by name in
+    # ``options.model_options``. Empty means the model takes none, and a
+    # request that sends any is refused. See ``ModelOption``.
+    model_options: list[ModelOption] = Field(default_factory=list)
     # ``motion_reference`` segments are prompts like text segments (MMCP 1.2):
     # several in one request, mixed with ``text`` / ``unconditioned`` ones.
     # Implied by ``"motion_reference"`` in ``supported_segments`` -- the SDK
