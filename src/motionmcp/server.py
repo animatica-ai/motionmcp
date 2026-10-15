@@ -202,6 +202,7 @@ def build_app(
             translations=(result.translations
                           if spec.supports_joint_translation else None),
             keyframes=result.keyframes,
+            notes=result.notes,
             fps=fps,
             model_id=spec.id,
             foot_contacts=result.foot_contacts or None,

@@ -186,6 +186,14 @@ class MotionResult:
     chunk_boundaries: Sequence[Sequence[int]] | None = None
     canonical_to_request: dict[str, str] | None = None
     trajectories: Sequence[dict | None] | None = None
+    # WHAT THE MODEL WANTS TO SAY ABOUT THE REQUEST IT JUST ANSWERED.
+    # A list of {code, severity, message, ...}. It is not an error channel --
+    # the answer is in the response either way -- it is for the things a model
+    # can see and the caller cannot: that the path asked for is faster than
+    # the character swims, that a drawn height was ignored, that a dial was
+    # clamped by something else. Silence here is a model with nothing to add,
+    # not a model that checked.
+    notes: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         r = self.rotations

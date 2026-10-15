@@ -206,6 +206,7 @@ def build_gltf(
     root_translations: np.ndarray,                              # (B, T, 3)
     translations: np.ndarray | None = None,                     # (B, T, J, 3)
     keyframes: 'dict[int, dict[str, Sequence[int]]] | None' = None,
+    notes: 'Sequence[dict[str, Any]] | None' = None,
     fps: float = 30.0,
     model_id: str,
     foot_contacts: dict[str, np.ndarray] | None = None,         # {joint_name: (B, T) bool}
@@ -392,6 +393,7 @@ def build_gltf(
         chunk_boundaries=chunk_boundaries,
         canonical_to_request=canonical_to_request,
         trajectories=trajectories,
+        notes=notes,
     )
 
     return {
@@ -429,6 +431,7 @@ def _build_extension(
     chunk_boundaries: Sequence[Sequence[int]] | None,
     canonical_to_request: dict[str, str] | None,
     trajectories: Sequence[dict[str, Any] | None] | None = None,
+    notes: Sequence[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     samples: list[dict[str, Any]] = []
     for b in range(num_samples):
@@ -454,4 +457,6 @@ def _build_extension(
     }
     if canonical_to_request:
         block["canonical_to_request"] = dict(canonical_to_request)
+    if notes:
+        block["notes"] = [dict(n) for n in notes]
     return block
