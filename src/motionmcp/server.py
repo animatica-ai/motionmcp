@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import math
 import re
 import typing
 from contextlib import asynccontextmanager
@@ -202,6 +203,7 @@ def build_app(
             translations=(result.translations
                           if spec.supports_joint_translation else None),
             keyframes=result.keyframes,
+            notes=result.notes,
             fps=fps,
             model_id=spec.id,
             foot_contacts=result.foot_contacts or None,
@@ -401,6 +403,87 @@ def _gate_segment_types(payload, registry) -> None:
 
 # ---- Generic per-spec validation ------------------------------------------
 
+def _validate_model_options(req: GenerateRequest, spec: ModelSpec) -> None:
+    """The dials the request sent, against the dials the model declared.
+
+    Refuses rather than ignores, and refuses rather than clamps. A caller that
+    sent a value and got the default back cannot tell the difference between
+    "applied" and "silently dropped", and that is exactly the bug the whole
+    advertise-then-refuse pattern exists to prevent.
+    """
+    sent = (req.options.model_options or {}) if req.options is not None else {}
+    if not sent:
+        return
+    declared = {o.name: o for o in (spec.model_options or [])}
+    if not declared:
+        raise ProtocolError(
+            "invalid_options",
+            "this model declares no model_options",
+            details={"model": spec.id, "sent": sorted(sent)},
+        )
+    for name, value in sent.items():
+        opt = declared.get(name)
+        if opt is None:
+            raise ProtocolError(
+                "invalid_options",
+                f"this model has no option {name!r}",
+                details={"model": spec.id, "options": sorted(declared)},
+            )
+        why = _option_error(opt, value)
+        if why is not None:
+            raise ProtocolError(
+                "invalid_options",
+                f"options.model_options.{name}: {why}",
+                details={"model": spec.id, "option": name, "value": _json_safe(value)},
+            )
+
+
+def _json_safe(value):
+    """The rejected value as the error will carry it: itself when it encodes as
+    strict JSON, else its repr -- a NaN echoed back raw fails the response."""
+    try:
+        json.dumps(value, allow_nan=False)
+        return value
+    except (TypeError, ValueError):
+        return repr(value)
+
+
+def _option_error(opt, value) -> "str | None":
+    """Why this value is not one of that option's, or None if it is."""
+    if opt.type == "boolean":
+        if not isinstance(value, bool):
+            return f"expected a boolean, got {type(value).__name__}"
+        return None
+    if opt.type in ("number", "integer"):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return f"expected a {opt.type}, got {type(value).__name__}"
+        # NaN slips past every comparison below, and the parser accepts it
+        if isinstance(value, float) and not math.isfinite(value):
+            return f"expected a finite {opt.type}, got {value}"
+        # an int is already whole; float() of a huge one would overflow
+        if opt.type == "integer" and isinstance(value, float) and not value.is_integer():
+            return f"expected an integer, got {value}"
+        if opt.minimum is not None and value < opt.minimum:
+            return f"{value} is below the minimum {opt.minimum}"
+        if opt.maximum is not None and value > opt.maximum:
+            return f"{value} is above the maximum {opt.maximum}"
+        return None
+    allowed = opt.values or []
+    if opt.type == "enum":
+        if value not in allowed:
+            return f"{value!r} is not one of {allowed}"
+        return None
+    # flags: any subset, no repeats, order irrelevant
+    if not isinstance(value, list):
+        return f"expected a list of flags, got {type(value).__name__}"
+    bad = [v for v in value if v not in allowed]
+    if bad:
+        return f"{bad} not among {allowed}"
+    if len(set(value)) != len(value):
+        return "the same flag is listed twice"
+    return None
+
+
 def _spec_json(spec: ModelSpec) -> dict:
     """One model's /capabilities entry. Every model served here takes a batch
     body and gets trajectories (the SDK provides both); a model that takes a
@@ -415,6 +498,10 @@ def _spec_json(spec: ModelSpec) -> dict:
     for key in _OPTIONAL_LIMITS:
         if limits.get(key) is None:
             limits.pop(key, None)
+    # No dials, no field: a 0.12 client parses capabilities with extra=forbid
+    # and would refuse every model here over an empty list it has no word for.
+    if not out.get("model_options"):
+        out.pop("model_options", None)
     return out
 
 
@@ -519,6 +606,8 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
     # payload (a clip's joints and length, a video's size and trimmed length).
     _validate_motion_reference(req, spec)
     _validate_video_reference(req, spec)
+
+    _validate_model_options(req, spec)
 
     # Thinning the curves: only where the backbone says it can. Ignoring it
     # would be worse than refusing -- the caller would get a dense answer and

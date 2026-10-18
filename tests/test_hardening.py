@@ -308,6 +308,9 @@ def test_capabilities_unchanged_for_an_old_backbone() -> None:
                   "supports_joint_translation",
                   "supports_keyframe_reduction"):
         assert now["models"][0].pop(added) is False, added
+    # and the dials an old backbone declares: none, so the field is left out
+    # and a 0.12 client (extra=forbid) still reads these capabilities
+    assert "model_options" not in now["models"][0]
     before.pop("protocol_version")
     now.pop("protocol_version")
     assert now == before
@@ -323,3 +326,94 @@ def test_mixed_flag_follows_supported_segments() -> None:
     assert m["supports_motion_reference_mixed"] is False
     m = _client().get("/capabilities").json()["models"][0]
     assert m["supports_motion_reference_mixed"] is True
+
+
+# ---- model_options: a dial the protocol has no word for ------------------------------------
+
+def _dialled():
+    """A backbone with one of each kind of dial."""
+    from motionmcp.schemas import ModelOption
+
+    class Dialled(NullBackbone):
+        def capabilities(self):
+            spec = super().capabilities()
+            spec.model_options = [
+                ModelOption(name="expressivity", type="number", default=1.0,
+                            minimum=0.0, maximum=3.0),
+                ModelOption(name="passes", type="integer", default=1, minimum=1),
+                ModelOption(name="muted", type="boolean", default=False),
+                ModelOption(name="variation", type="enum", default="normal",
+                            values=["subtle", "normal", "wide"]),
+                ModelOption(name="layers", type="flags",
+                            default=["body"], values=["body", "travel", "turn"]),
+            ]
+            return spec
+    return TestClient(build_app(Dialled()))
+
+
+def _gen(client, model_options):
+    seg = {"type": "text", "prompt": "walk", "duration_frames": 10}
+    body = _body(_skel(client), seg)
+    body["options"] = {"model_options": model_options}
+    return client.post("/generate", json=body)
+
+
+def test_model_options_are_published_for_a_client_to_render() -> None:
+    m = _dialled().get("/capabilities").json()["models"][0]
+    by = {o["name"]: o for o in m["model_options"]}
+    assert by["variation"]["values"] == ["subtle", "normal", "wide"]
+    assert by["expressivity"]["minimum"] == 0.0 and by["expressivity"]["maximum"] == 3.0
+    assert by["layers"]["type"] == "flags"
+
+
+def test_a_model_that_declares_no_dials_refuses_one() -> None:
+    r = _gen(TestClient(build_app(NullBackbone())), {"expressivity": 2.0})
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "invalid_options"
+
+
+def test_an_undeclared_name_is_refused_not_ignored() -> None:
+    r = _gen(_dialled(), {"nosuchdial": 1})
+    assert r.status_code == 400
+    assert "nosuchdial" in r.json()["error"]["message"]
+
+
+def test_a_value_out_of_range_is_refused_not_clamped() -> None:
+    c = _dialled()
+    assert _gen(c, {"expressivity": 3.5}).status_code == 400
+    assert _gen(c, {"expressivity": -0.1}).status_code == 400
+    assert _gen(c, {"passes": 1.5}).status_code == 400
+    assert _gen(c, {"muted": "yes"}).status_code == 400
+    assert _gen(c, {"variation": "enormous"}).status_code == 400
+    assert _gen(c, {"layers": ["body", "fins"]}).status_code == 400
+    assert _gen(c, {"layers": ["body", "body"]}).status_code == 400
+
+
+def test_values_the_model_declared_are_accepted() -> None:
+    c = _dialled()
+    r = _gen(c, {"expressivity": 2.5, "passes": 3, "muted": True,
+                 "variation": "wide", "layers": ["body", "turn"]})
+    assert r.status_code == 200, r.text
+
+
+def test_a_choice_without_values_cannot_be_declared() -> None:
+    from motionmcp.schemas import ModelOption
+    for kind in ("enum", "flags"):
+        with pytest.raises(ValueError):
+            ModelOption(name="mode", type=kind)
+        with pytest.raises(ValueError):
+            ModelOption(name="mode", type=kind, values=[])
+
+
+def test_a_non_finite_or_huge_number_is_refused_cleanly() -> None:
+    c = _dialled()
+    seg = {"type": "text", "prompt": "walk", "duration_frames": 10}
+    for raw in ("NaN", "Infinity", "-Infinity"):
+        body = _body(_skel(c), seg)
+        body["options"] = {"model_options": {"expressivity": "__X__"}}
+        text = json.dumps(body).replace('"__X__"', raw)
+        r = c.post("/generate", content=text, headers={"content-type": "application/json"})
+        assert r.status_code == 400, (raw, r.status_code, r.text[:200])
+        assert r.json()["error"]["code"] == "invalid_options"
+    r = _gen(c, {"passes": 10 ** 400})
+    assert r.status_code == 200, r.text[:200]       # whole, and no float overflow
