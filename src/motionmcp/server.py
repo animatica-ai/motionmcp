@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import math
 import re
 import typing
 from contextlib import asynccontextmanager
@@ -433,8 +434,18 @@ def _validate_model_options(req: GenerateRequest, spec: ModelSpec) -> None:
             raise ProtocolError(
                 "invalid_options",
                 f"options.model_options.{name}: {why}",
-                details={"model": spec.id, "option": name, "value": value},
+                details={"model": spec.id, "option": name, "value": _json_safe(value)},
             )
+
+
+def _json_safe(value):
+    """The rejected value as the error will carry it: itself when it encodes as
+    strict JSON, else its repr -- a NaN echoed back raw fails the response."""
+    try:
+        json.dumps(value, allow_nan=False)
+        return value
+    except (TypeError, ValueError):
+        return repr(value)
 
 
 def _option_error(opt, value) -> "str | None":
@@ -446,7 +457,11 @@ def _option_error(opt, value) -> "str | None":
     if opt.type in ("number", "integer"):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return f"expected a {opt.type}, got {type(value).__name__}"
-        if opt.type == "integer" and not float(value).is_integer():
+        # NaN slips past every comparison below, and the parser accepts it
+        if isinstance(value, float) and not math.isfinite(value):
+            return f"expected a finite {opt.type}, got {value}"
+        # an int is already whole; float() of a huge one would overflow
+        if opt.type == "integer" and isinstance(value, float) and not value.is_integer():
             return f"expected an integer, got {value}"
         if opt.minimum is not None and value < opt.minimum:
             return f"{value} is below the minimum {opt.minimum}"
@@ -483,6 +498,10 @@ def _spec_json(spec: ModelSpec) -> dict:
     for key in _OPTIONAL_LIMITS:
         if limits.get(key) is None:
             limits.pop(key, None)
+    # No dials, no field: a 0.12 client parses capabilities with extra=forbid
+    # and would refuse every model here over an empty list it has no word for.
+    if not out.get("model_options"):
+        out.pop("model_options", None)
     return out
 
 

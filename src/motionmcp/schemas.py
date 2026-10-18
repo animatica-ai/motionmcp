@@ -470,6 +470,13 @@ class ModelOption(BaseModel):
     # flags: the permitted values, any subset of which is sent as a list.
     values: Optional[list[str]] = Field(None, max_length=32)
 
+    @model_validator(mode="after")
+    def _choices_need_values(self) -> "ModelOption":
+        # an enum with nothing to choose from refuses every request that sets it
+        if self.type in ("enum", "flags") and not self.values:
+            raise ValueError(f"a {self.type} option needs its permitted values")
+        return self
+
 
 class Options(BaseModel):
     model_config = ConfigDict(extra="forbid")
