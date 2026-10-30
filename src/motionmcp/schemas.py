@@ -435,6 +435,29 @@ class Guidance(BaseModel):
         return self
 
 
+class PromptVocabularyEntry(BaseModel):
+    """One text prompt a vocabulary-mode model performs.
+
+    Some models do not read free text: they know a fixed set of commands --
+    "swim fast", "turn right" -- and a prompt is one of them. Such a model says
+    so with ``ModelSpec.text_prompt_mode = "vocabulary"`` and lists the
+    commands here, so a client can offer them as a menu instead of a text box,
+    and a server can refuse a prompt it would otherwise silently ignore.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    # Sent back verbatim as ``TextSegment.prompt``. Matching is case- and
+    # whitespace-insensitive ("Swim  Fast" is "swim fast"), nothing looser.
+    prompt: str = Field(..., min_length=1, max_length=80)
+    # What the command does, for a client building the menu.
+    description: Optional[str] = Field(None, max_length=400)
+
+
+def normalize_prompt(prompt: str) -> str:
+    """The form vocabulary prompts are compared in: lowercase, single spaces."""
+    return " ".join(str(prompt).lower().split())
+
+
 class ModelOption(BaseModel):
     """One dial a model exposes that the protocol has no word for.
 

@@ -17,17 +17,18 @@ from __future__ import annotations
 import abc
 import inspect
 from dataclasses import dataclass, field
-from typing import Awaitable, Optional, Sequence
+from typing import Awaitable, Literal, Optional, Sequence
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .protocol import (
     DEFAULT_LIMITS,
     SUPPORTED_GUIDANCE_TYPES,
     SUPPORTED_SEGMENTS,
 )
-from .schemas import GenerateRequest, ModelOption, Skeleton
+from .schemas import (GenerateRequest, ModelOption, PromptVocabularyEntry, Skeleton,
+                      normalize_prompt)
 
 
 # ---- ModelSpec — published at /capabilities --------------------------------
@@ -93,6 +94,26 @@ class ModelSpec(BaseModel):
     # ``options.model_options``. Empty means the model takes none, and a
     # request that sends any is refused. See ``ModelOption``.
     model_options: list[ModelOption] = Field(default_factory=list)
+    # HOW THIS MODEL READS A TEXT PROMPT. ``"free"`` (or unset): any text, as
+    # a caption. ``"vocabulary"``: only the commands in ``prompt_vocabulary``,
+    # and the server refuses any other prompt rather than ignore it. Both are
+    # left out of /capabilities when unset, so a client that predates them
+    # still reads this model.
+    text_prompt_mode: Optional[Literal["free", "vocabulary"]] = None
+    prompt_vocabulary: list[PromptVocabularyEntry] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _vocabulary_is_usable(self) -> "ModelSpec":
+        # a vocabulary-mode model with no commands refuses every text prompt
+        if self.text_prompt_mode == "vocabulary":
+            if not self.prompt_vocabulary:
+                raise ValueError('text_prompt_mode "vocabulary" needs a prompt_vocabulary')
+            if "text" not in self.supported_segments:
+                raise ValueError('text_prompt_mode "vocabulary" needs "text" in supported_segments')
+        seen = [normalize_prompt(e.prompt) for e in self.prompt_vocabulary]
+        if len(set(seen)) != len(seen):
+            raise ValueError("prompt_vocabulary lists the same prompt twice")
+        return self
     # ``motion_reference`` segments are prompts like text segments (MMCP 1.2):
     # several in one request, mixed with ``text`` / ``unconditioned`` ones.
     # Implied by ``"motion_reference"`` in ``supported_segments`` -- the SDK

@@ -417,3 +417,64 @@ def test_a_non_finite_or_huge_number_is_refused_cleanly() -> None:
         assert r.json()["error"]["code"] == "invalid_options"
     r = _gen(c, {"passes": 10 ** 400})
     assert r.status_code == 200, r.text[:200]       # whole, and no float overflow
+
+
+# ---- prompt vocabulary: a model that only knows its own commands ------------------------
+
+def _commanded():
+    """A backbone that reads text only as one of its commands."""
+    from motionmcp.schemas import PromptVocabularyEntry
+
+    class Commanded(NullBackbone):
+        def capabilities(self):
+            spec = super().capabilities()
+            spec.text_prompt_mode = "vocabulary"
+            spec.prompt_vocabulary = [
+                PromptVocabularyEntry(prompt="swim fast", description="cruise, hard strokes"),
+                PromptVocabularyEntry(prompt="turn right"),
+            ]
+            return spec
+    return TestClient(build_app(Commanded()))
+
+
+def _text(client, prompt):
+    seg = {"type": "text", "prompt": prompt, "duration_frames": 10}
+    return client.post("/generate", json=_body(_skel(client), seg))
+
+
+def test_a_vocabulary_is_published_for_a_client_to_offer() -> None:
+    m = _commanded().get("/capabilities").json()["models"][0]
+    assert m["text_prompt_mode"] == "vocabulary"
+    assert [v["prompt"] for v in m["prompt_vocabulary"]] == ["swim fast", "turn right"]
+    assert m["prompt_vocabulary"][0]["description"] == "cruise, hard strokes"
+
+
+def test_a_prompt_outside_the_vocabulary_is_refused_not_ignored() -> None:
+    r = _text(_commanded(), "do a backflip")
+    assert r.status_code == 400
+    err = r.json()["error"]
+    assert err["code"] == "invalid_request"
+    assert err["details"]["vocabulary"] == ["swim fast", "turn right"]
+
+
+def test_a_vocabulary_prompt_matches_regardless_of_case_and_spacing() -> None:
+    c = _commanded()
+    assert _text(c, "swim fast").status_code == 200
+    assert _text(c, "  Swim   FAST ").status_code == 200
+
+
+def test_a_free_text_model_reads_anything_and_publishes_no_prompt_fields() -> None:
+    c = TestClient(build_app(NullBackbone()))
+    assert _text(c, "do a backflip").status_code == 200
+    m = c.get("/capabilities").json()["models"][0]
+    assert "text_prompt_mode" not in m and "prompt_vocabulary" not in m
+
+
+def test_a_vocabulary_mode_needs_a_vocabulary_and_text_segments() -> None:
+    from motionmcp.backbone import ModelSpec
+    base = NullBackbone().capabilities().model_dump()
+    with pytest.raises(ValueError):
+        ModelSpec(**{**base, "text_prompt_mode": "vocabulary", "prompt_vocabulary": []})
+    with pytest.raises(ValueError):
+        ModelSpec(**{**base, "text_prompt_mode": "vocabulary",
+                     "prompt_vocabulary": [{"prompt": "a"}, {"prompt": " A "}]})
