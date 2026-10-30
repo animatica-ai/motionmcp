@@ -45,7 +45,7 @@ from .protocol import (
     ROTATION_FORMAT,
     UNITS,
 )
-from .schemas import GenerateRequest, Segment
+from .schemas import GenerateRequest, Segment, normalize_prompt
 
 
 # ---- Backbone registry ----------------------------------------------------
@@ -403,6 +403,26 @@ def _gate_segment_types(payload, registry) -> None:
 
 # ---- Generic per-spec validation ------------------------------------------
 
+def _validate_prompts(req: GenerateRequest, spec: ModelSpec) -> None:
+    """A vocabulary-mode model takes only its own commands as text prompts.
+
+    Refused, not ignored -- the same advertise-then-refuse rule as the dials:
+    a caller whose prompt was silently dropped cannot tell it from one that was
+    performed."""
+    if spec.text_prompt_mode != "vocabulary":
+        return
+    known = {normalize_prompt(e.prompt) for e in spec.prompt_vocabulary}
+    for i, seg in enumerate(req.segments):
+        if getattr(seg, "type", None) == "text" and normalize_prompt(seg.prompt) not in known:
+            raise ProtocolError(
+                "invalid_request",
+                f"segments[{i}].prompt {seg.prompt!r} is not one of this model's "
+                f"commands; it reads only its prompt_vocabulary",
+                details={"segment": i, "prompt": seg.prompt,
+                         "vocabulary": [e.prompt for e in spec.prompt_vocabulary]},
+            )
+
+
 def _validate_model_options(req: GenerateRequest, spec: ModelSpec) -> None:
     """The dials the request sent, against the dials the model declared.
 
@@ -502,6 +522,12 @@ def _spec_json(spec: ModelSpec) -> dict:
     # and would refuse every model here over an empty list it has no word for.
     if not out.get("model_options"):
         out.pop("model_options", None)
+    # the same for the prompt fields: unset is "free text", and a client that
+    # predates them must still be able to read this model
+    if out.get("text_prompt_mode") is None:
+        out.pop("text_prompt_mode", None)
+    if not out.get("prompt_vocabulary"):
+        out.pop("prompt_vocabulary", None)
     return out
 
 
@@ -608,6 +634,7 @@ def _validate_against_spec(req: GenerateRequest, spec) -> None:
     _validate_video_reference(req, spec)
 
     _validate_model_options(req, spec)
+    _validate_prompts(req, spec)
 
     # Thinning the curves: only where the backbone says it can. Ignoring it
     # would be worse than refusing -- the caller would get a dense answer and
